@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environment
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data
+data/raw/
+data/interim/
+data/processed/
+
+# Generated reports
+reports/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Python tooling
+*.egg-info/
