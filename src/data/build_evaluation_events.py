@@ -5,16 +5,13 @@ from pathlib import Path
 import pandas as pd
 
 
-# ============================================================
-# PATHS
-# ============================================================
-
 ROOT = Path(__file__).resolve().parents[2]
 
 DATA_DIR = ROOT / "data" / "raw" / "KuaiRand-1K" / "data"
 OUTPUT_DIR = ROOT / "data" / "processed"
 
 RANDOM_FILE = DATA_DIR / "log_random_4_22_to_5_08_1k.csv"
+
 STANDARD_FILES = [
     DATA_DIR / "log_standard_4_08_to_4_21_1k.csv",
     DATA_DIR / "log_standard_4_22_to_5_08_1k.csv",
@@ -22,12 +19,7 @@ STANDARD_FILES = [
 
 OUTPUT_FILE = OUTPUT_DIR / "evaluation_events.parquet"
 
-
-# ============================================================
-# COLUMNS
-# ============================================================
-
-EVENT_COLS = [
+COLS = [
     "user_id",
     "video_id",
     "time_ms",
@@ -49,301 +41,274 @@ EVENT_COLS = [
     "tab",
 ]
 
+CHUNK_SIZE = 500_000
 
-# ============================================================
-# LOAD DATA
-# ============================================================
 
-def load_random_log():
+def load_random():
     print("Loading random log...")
 
     df = pd.read_csv(
         RANDOM_FILE,
-        usecols=EVENT_COLS,
+        usecols=COLS,
     )
+
+    df = df.drop_duplicates(
+        subset=["user_id", "video_id", "time_ms"]
+    )
+
+    df = df.sort_values(
+        ["time_ms", "user_id", "video_id"]
+    ).reset_index(drop=True)
 
     print(f"  Random events: {len(df):,}")
 
     return df
 
 
-def load_standard_logs():
-    print("Loading standard logs...")
+def find_previous_same_video(random_events):
+    """
+    Find the latest standard interaction of the same
+    user-video pair strictly before each random exposure.
+    """
 
-    dfs = []
+    print("\nFinding previous same-video interactions...")
 
-    for path in STANDARD_FILES:
-        print(f"  Loading: {path.name}")
-
-        df = pd.read_csv(
-            path,
-            usecols=EVENT_COLS,
-        )
-
-        print(f"    Rows: {len(df):,}")
-
-        dfs.append(df)
-
-    standard = pd.concat(
-        dfs,
-        ignore_index=True,
-    )
-
-    print(f"  Total standard events: {len(standard):,}")
-
-    return standard
-
-
-# ============================================================
-# CLEAN / SORT
-# ============================================================
-
-def prepare_logs(random_log, standard):
-    print("\nPreparing logs...")
-
-    random_log = random_log.drop_duplicates(
-        subset=["user_id", "video_id", "time_ms"]
-    ).copy()
-
-    standard = standard.drop_duplicates(
-        subset=["user_id", "video_id", "time_ms"]
-    ).copy()
-
-    random_log = random_log.sort_values(
-        ["user_id", "time_ms", "video_id"]
-    ).reset_index(drop=True)
-
-    standard = standard.sort_values(
-        ["user_id", "time_ms", "video_id"]
-    ).reset_index(drop=True)
-
-    print(f"  Random events after dedup:   {len(random_log):,}")
-    print(f"  Standard events after dedup: {len(standard):,}")
-
-    return random_log, standard
-
-
-# ============================================================
-# BUILD EVALUATION EVENTS
-# ============================================================
-
-def build_evaluation_events(random_log, standard):
-    print("\nBuilding evaluation events...")
-
-    # Only information needed to identify prior user-video exposure.
-    prior = standard[
+    # Only columns needed for this operation.
+    target = random_events[
         ["user_id", "video_id", "time_ms"]
     ].copy()
 
-    prior = prior.rename(
-        columns={
-            "time_ms": "prior_time_ms"
-        }
+    target = target.rename(
+        columns={"time_ms": "random_time_ms"}
     )
 
-    # Every random exposure is an evaluation event.
-    eval_events = random_log.copy()
+    # Keep latest previous occurrence for each evaluation event.
+    best = {}
 
-    # --------------------------------------------------------
-    # Find the latest previous occurrence of the same
-    # user-video pair in standard history.
-    # --------------------------------------------------------
+    total_rows = 0
 
-    merged = eval_events[
-        ["user_id", "video_id", "time_ms"]
-    ].merge(
-        prior,
-        on=["user_id", "video_id"],
-        how="left",
+    for path in STANDARD_FILES:
+
+        print(f"\nProcessing: {path.name}")
+
+        for chunk_no, chunk in enumerate(
+            pd.read_csv(
+                path,
+                usecols=["user_id", "video_id", "time_ms"],
+                chunksize=CHUNK_SIZE,
+            ),
+            start=1,
+        ):
+            total_rows += len(chunk)
+
+            # Only standard events that could possibly match.
+            merged = chunk.merge(
+                target,
+                on=["user_id", "video_id"],
+                how="inner",
+            )
+
+            if len(merged) == 0:
+                print(
+                    f"  chunk {chunk_no}: "
+                    f"{len(chunk):,} rows -> no matches"
+                )
+                continue
+
+            merged = merged[
+                merged["time_ms"] < merged["random_time_ms"]
+            ]
+
+            if len(merged) == 0:
+                continue
+
+            grouped = (
+                merged
+                .groupby(
+                    [
+                        "user_id",
+                        "video_id",
+                        "random_time_ms",
+                    ],
+                    as_index=False,
+                )["time_ms"]
+                .max()
+            )
+
+            for row in grouped.itertuples(index=False):
+                key = (
+                    row.user_id,
+                    row.video_id,
+                    row.random_time_ms,
+                )
+
+                previous = best.get(key)
+
+                if previous is None or row.time_ms > previous:
+                    best[key] = row.time_ms
+
+            if chunk_no % 2 == 0:
+                print(
+                    f"  chunk {chunk_no}: "
+                    f"{total_rows:,} standard rows processed"
+                )
+
+    print(
+        f"\nTotal standard rows processed: "
+        f"{total_rows:,}"
     )
 
-    merged = merged[
-        merged["prior_time_ms"] < merged["time_ms"]
+    result = target.copy()
+
+    result["previous_same_video_time_ms"] = [
+        best.get(
+            (
+                row.user_id,
+                row.video_id,
+                row.random_time_ms,
+            )
+        )
+        for row in result.itertuples(index=False)
     ]
 
-    latest_prior = (
-        merged
-        .groupby(
-            ["user_id", "video_id", "time_ms"],
-            as_index=False,
-        )["prior_time_ms"]
-        .max()
+    return result
+
+
+def build_evaluation_events(random_events):
+    print("\nBuilding evaluation table...")
+
+    previous = find_previous_same_video(
+        random_events
     )
 
-    latest_prior = latest_prior.rename(
-        columns={
-            "prior_time_ms": "previous_same_video_time_ms"
-        }
-    )
-
-    eval_events = eval_events.merge(
-        latest_prior,
-        on=["user_id", "video_id", "time_ms"],
+    events = random_events.merge(
+        previous,
+        left_on=[
+            "user_id",
+            "video_id",
+            "time_ms",
+        ],
+        right_on=[
+            "user_id",
+            "video_id",
+            "random_time_ms",
+        ],
         how="left",
     )
 
-    # --------------------------------------------------------
-    # Basic evaluation metadata
-    # --------------------------------------------------------
-
-    eval_events["evaluation_id"] = range(len(eval_events))
-
-    eval_events["has_previous_same_video"] = (
-        eval_events["previous_same_video_time_ms"].notna()
+    events = events.drop(
+        columns=["random_time_ms"]
     )
 
-    eval_events["time_since_previous_same_video_ms"] = (
-        eval_events["time_ms"]
-        - eval_events["previous_same_video_time_ms"]
+    events["has_previous_same_video"] = (
+        events["previous_same_video_time_ms"]
+        .notna()
     )
 
-    # --------------------------------------------------------
-    # Keep evaluation events in strict chronological order.
-    # --------------------------------------------------------
+    events["time_since_previous_same_video_ms"] = (
+        events["time_ms"]
+        - events["previous_same_video_time_ms"]
+    )
 
-    eval_events = eval_events.sort_values(
+    events = events.sort_values(
         ["time_ms", "user_id", "video_id"]
     ).reset_index(drop=True)
 
-    # Reassign IDs after final ordering.
-    eval_events["evaluation_id"] = range(len(eval_events))
+    events.insert(
+        0,
+        "evaluation_id",
+        range(len(events)),
+    )
 
-    return eval_events
+    return events
 
 
-# ============================================================
-# VALIDATION
-# ============================================================
-
-def validate_evaluation_events(eval_events):
+def validate(events):
     print("\n" + "=" * 80)
-    print("EVALUATION EVENT VALIDATION")
+    print("VALIDATION")
     print("=" * 80)
 
-    print(f"Evaluation events: {len(eval_events):,}")
-    print(f"Users:             {eval_events['user_id'].nunique():,}")
-    print(f"Videos:            {eval_events['video_id'].nunique():,}")
+    print(f"Evaluation events: {len(events):,}")
+    print(f"Users:              {events.user_id.nunique():,}")
+    print(f"Videos:             {events.video_id.nunique():,}")
 
-    print("\nDuplicate evaluation IDs:")
+    dup = events[
+        ["user_id", "video_id", "time_ms"]
+    ].duplicated().sum()
+
+    print(f"Duplicate events:   {dup:,}")
+
+    previous = events["has_previous_same_video"].sum()
+
     print(
-        eval_events["evaluation_id"]
-        .duplicated()
-        .sum()
+        f"Previously seen:    "
+        f"{previous:,} "
+        f"({previous / len(events) * 100:.4f}%)"
     )
 
-    print("\nDuplicate user-video-time events:")
     print(
-        eval_events[
-            ["user_id", "video_id", "time_ms"]
-        ]
-        .duplicated()
-        .sum()
+        f"Never seen:         "
+        f"{len(events) - previous:,} "
+        f"({(len(events) - previous) / len(events) * 100:.4f}%)"
     )
 
-    print("\nPreviously seen same video:")
-    n_seen = eval_events["has_previous_same_video"].sum()
-
-    print(f"  Yes: {n_seen:,}")
-    print(
-        f"  No:  {len(eval_events) - n_seen:,}"
-    )
-
-    print("\nEvaluation time range:")
-
-    min_time = pd.to_datetime(
-        eval_events["time_ms"],
-        unit="ms",
-    )
-
-    print(f"  Min: {min_time.min()}")
-    print(f"  Max: {min_time.max()}")
-
-    # Ensure every evaluation event is actually random.
-    if not (eval_events["is_rand"] == 1).all():
+    if not (events["is_rand"] == 1).all():
         raise ValueError(
-            "Evaluation table contains non-random events."
+            "Non-random event found."
         )
 
-    # Ensure no duplicate evaluation events remain.
-    if eval_events[
-        ["user_id", "video_id", "time_ms"]
-    ].duplicated().any():
+    if dup != 0:
         raise ValueError(
             "Duplicate evaluation events remain."
         )
 
-    # Previous same-video timestamps must be strictly earlier.
-    valid_previous = eval_events[
-        "previous_same_video_time_ms"
-    ].notna()
+    mask = events["previous_same_video_time_ms"].notna()
 
-    if valid_previous.any():
+    if mask.any():
         if not (
-            eval_events.loc[
-                valid_previous,
+            events.loc[
+                mask,
                 "previous_same_video_time_ms",
             ]
             <
-            eval_events.loc[
-                valid_previous,
+            events.loc[
+                mask,
                 "time_ms",
             ]
         ).all():
             raise ValueError(
-                "Temporal ordering violation detected."
+                "Temporal ordering violation."
             )
 
     print("\nValidation: PASS")
 
 
-# ============================================================
-# SAVE
-# ============================================================
+def main():
 
-def save_evaluation_events(eval_events):
+    print("=" * 80)
+    print("BUILD KUAIRAND EVALUATION EVENTS")
+    print("=" * 80)
+
     OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True,
     )
 
-    eval_events.to_parquet(
+    random_events = load_random()
+
+    events = build_evaluation_events(
+        random_events
+    )
+
+    validate(events)
+
+    events.to_parquet(
         OUTPUT_FILE,
         index=False,
     )
 
     print("\nSaved:")
     print(f"  {OUTPUT_FILE}")
-
-
-# ============================================================
-# MAIN
-# ============================================================
-
-def main():
-    print("=" * 80)
-    print("BUILD KUAIRAND EVALUATION EVENTS")
-    print("=" * 80)
-
-    random_log = load_random_log()
-    standard = load_standard_logs()
-
-    random_log, standard = prepare_logs(
-        random_log,
-        standard,
-    )
-
-    eval_events = build_evaluation_events(
-        random_log,
-        standard,
-    )
-
-    validate_evaluation_events(
-        eval_events,
-    )
-
-    save_evaluation_events(
-        eval_events,
-    )
 
     print("\nDone.")
 
