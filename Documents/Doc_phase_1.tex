@@ -1,0 +1,70 @@
+\documentclass[12pt,a4paper]{article}
+
+% Khai báo các gói hỗ trợ tiếng Việt và định dạng cơ bản
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\usepackage{geometry}
+\geometry{
+    a4paper,
+    left=25mm,
+    right=25mm,
+    top=25mm,
+    bottom=25mm
+}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{titlesec}
+
+% Tùy chỉnh màu sắc cho các đường link
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+}
+
+\title{\textbf{BIÊN BẢN NGHIỆM THU: GIAI ĐOẠN 1 -- DATA EDA}}
+\author{Dự án: How Much Intelligence Can We Get For How Little?}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\hrule
+\vspace{10pt}
+
+\section{Dữ liệu và Định dạng Cốt lõi}
+Trong phần phân tích cấu trúc tổng thể, hệ thống đã đáp ứng các yêu cầu cơ bản về mặt thiết lập và định dạng:
+\begin{itemize}
+    \item \textbf{Bảng/file có sẵn:} Hệ thống đã pipeline thành công dữ liệu thô sang 8 file \texttt{.parquet} riêng biệt bao gồm tập huấn luyện (train), tập kiểm định (validation), tập kiểm thử (test), siêu dữ liệu tương ứng (\texttt{\_dataset}), tập sự kiện đánh giá (\texttt{evaluation\_events}) và lịch sử (\texttt{evaluation\_history}).
+    \item \textbf{User ID \& Item ID:} Các trường \texttt{user\_id} và \texttt{video\_id} đã được trích xuất đầy đủ và đồng bộ về định dạng nguyên[cite: 2].
+    \item \textbf{Feedback fields:} Các nhãn tương tác phụ (\texttt{is\_click}, \texttt{is\_like}, \texttt{is\_follow}, \texttt{is\_comment}, \texttt{is\_forward}, \texttt{is\_hate}) và đặc biệt là nhãn mục tiêu chính \texttt{long\_view} đều đã được thu thập[cite: 2].
+    \item \textbf{Random-intervention indicators:} Cột nhận diện can thiệp ngẫu nhiên \texttt{is\_rand} đã có mặt để phục vụ việc định hình quần thể đánh giá thực nghiệm[cite: 2].
+\end{itemize}
+
+\section{Tính toàn vẹn của Thời gian (Temporal Integrity)}
+Đây là hạng mục kiểm tra trọng yếu nhất nhằm đảm bảo việc tuân thủ khắt khe ngân sách lịch sử và không rò rỉ dữ liệu tương lai.
+\begin{itemize}
+    \item \textbf{Khoảng thời gian:} Dữ liệu được chia tách ranh giới thời gian (temporal split) nối tiếp nhau cực kỳ hoàn hảo, tuân thủ tuyệt đối quy tắc chia theo thứ tự thời gian của Proposal:
+    \begin{itemize}
+        \item \textit{Giai đoạn Train:} Từ mốc \texttt{1650600645720} đến \texttt{1651756712186}.
+        \item \textit{Giai đoạn Validation:} Từ mốc \texttt{1651756718363} đến \texttt{1651900133543}.
+        \item \textit{Giai đoạn Test/Evaluation:} Từ mốc \texttt{1651900140977} đến \texttt{1652025123404}.
+    \end{itemize}
+    \item \textbf{Event ordering:} 100\% các file dữ liệu đều đã vượt qua bài kiểm tra sắp xếp tăng dần tuyệt đối theo trường \texttt{time\_ms}, đáp ứng invariant chống rò rỉ thông tin tương lai.
+\end{itemize}
+
+\section{Tình trạng Dữ liệu Khuyết thiếu (Missing Values)}
+Việc khuyết thiếu dữ liệu đã được rà soát và ghi nhận có mang ý nghĩa logic về mặt hệ thống:
+\begin{itemize}
+    \item \textbf{Các log tương tác:} Các file lõi lưu trữ hành vi (\texttt{train}, \texttt{validation}, \texttt{test}, \texttt{evaluation\_history}) hoàn toàn sạch, không chứa bất kỳ giá trị rỗng nào.
+    \item \textbf{Metadata video:} Các file \texttt{\_dataset} có thiếu sót ở các trường \texttt{video\_duration}, \texttt{music\_type}, và \texttt{tag}, phản ánh đúng thực tế dữ liệu của hệ thống. 
+    \item \textbf{Sự kiện lịch sử:} File \texttt{evaluation\_events} khuyết dữ liệu ở trường \texttt{previous\_same\_video\_time\_ms} đúng như thiết kế logic đối với các trường hợp người dùng xem một video lần đầu tiên.
+\end{itemize}
+
+\vspace{20pt}
+\noindent\textit{Kết luận: Giai đoạn 1 đã hoàn thành 100\% các hạng mục kiểm tra. Dữ liệu sẵn sàng để chuyển sang Giai đoạn 2: Thiết lập Data Contract.}
+
+\end{document}

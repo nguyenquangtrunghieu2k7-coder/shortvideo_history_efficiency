@@ -1,0 +1,74 @@
+\documentclass[12pt,a4paper]{article}
+
+% Khai báo các gói hỗ trợ tiếng Việt, định dạng cơ bản và toán học
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\usepackage{amsmath} % Đã thêm gói này để sửa lỗi \text{}
+\usepackage{geometry}
+\geometry{
+    a4paper,
+    left=25mm,
+    right=25mm,
+    top=25mm,
+    bottom=25mm
+}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{xcolor}
+
+% Tùy chỉnh màu sắc cho các đường link
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+}
+
+\title{\textbf{BIÊN BẢN NGHIỆM THU: GIAI ĐOẠN 2 -- DATA CONTRACT}}
+\author{Dự án: How Much Intelligence Can We Get For How Little?}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\hrule
+\vspace{15pt}
+
+\noindent Giai đoạn 2 thiết lập "Hợp đồng Dữ liệu" (Data Contract) nhằm đóng băng các quy tắc định nghĩa dữ liệu cốt lõi, đảm bảo không xảy ra hiện tượng rò rỉ thông tin tương lai (temporal leakage) và chuẩn bị sẵn sàng cho việc huấn luyện mô hình.
+
+\section{Định nghĩa Sự kiện Lịch sử Hợp lệ (Eligible-History Event)}
+\begin{itemize}
+    \item Các sự kiện lịch sử đã được khóa chặt dựa trên nguyên tắc thời gian: chỉ sử dụng các tương tác xảy ra trước thời điểm quyết định ($t_i < t$).
+    \item Hệ thống đã trích xuất thành công các biểu diễn lịch sử theo ngân sách thông tin (History Budgets) định trước, bao gồm các mốc: $K \in \{1, 5, 10, 20, 50, 100, \text{Full}\}$.
+\end{itemize}
+
+\section{Định nghĩa Sự kiện Đánh giá (Evaluation Event)}
+\begin{itemize}
+    \item \textbf{Quần thể đánh giá:} Đã chốt danh sách bao gồm đúng 43,028 sự kiện hiển thị.
+    \item \textbf{Tính ngẫu nhiên (Random Exposure):} 100\% sự kiện đánh giá (cờ \texttt{is\_rand = 1}) được lấy từ tệp can thiệp ngẫu nhiên, đảm bảo tính khách quan của thực nghiệm.
+    \item \textbf{Tính duy nhất:} Vượt qua bài kiểm tra Uniqueness, không có sự trùng lặp nào đối với bộ khóa (\texttt{user\_id}, \texttt{video\_id}, \texttt{time\_ms}).
+\end{itemize}
+
+\section{Luật Khả dụng của Đặc trưng (Feature-Availability Rules)}
+\begin{itemize}
+    \item \textbf{Đặc trưng bị cấm:} Toàn bộ các tương tác xảy ra sau hiển thị (Post-exposure) như \texttt{play\_time\_ms}, \texttt{is\_like}, \texttt{is\_follow}... đã bị khóa và dán nhãn cấm sử dụng làm đặc trưng đầu vào (input features) để ngăn chặn rò rỉ dữ liệu.
+    \item \textbf{Đặc trưng hợp lệ:} Chỉ cho phép mô hình tiếp cận các thông tin định danh và lịch sử tương tác hợp lệ tính đến thời điểm $t$.
+\end{itemize}
+
+\section{Biểu diễn Ứng viên (Candidate Representation)}
+\begin{itemize}
+    \item Tại thời điểm hiện tại, ứng viên (candidate) được biểu diễn duy nhất qua \texttt{video\_id}.
+    \item Các siêu dữ liệu tĩnh (metadata) không được sử dụng trong tệp đánh giá nhằm cô lập ảnh hưởng của tính năng gợi ý thuần túy.
+\end{itemize}
+
+\section{Định nghĩa Biến mục tiêu (Target Definition)}
+\begin{itemize}
+    \item \textbf{Biến mục tiêu chính (Primary Target):} Biến \texttt{long\_view} đã được chốt làm mục tiêu tối ưu chính. Dữ liệu ghi nhận 0\% missing value và tỷ lệ positive đạt 8.42\%.
+    \item \textbf{Biến mục tiêu phụ (Secondary Target):} Biến \texttt{is\_click} (tỷ lệ 17.41\%) cùng các hành vi tương tác khác được lưu trữ để phục vụ phân tích độ nhạy hoặc làm baseline mở rộng.
+\end{itemize}
+
+\vspace{20pt}
+\noindent\textit{\textbf{Kết luận:} Hợp đồng dữ liệu đã được thiết lập chặt chẽ. Hệ thống sẵn sàng chuyển sang Giai đoạn 3: Huấn luyện Baseline và Core Models.}
+
+\end{document}
