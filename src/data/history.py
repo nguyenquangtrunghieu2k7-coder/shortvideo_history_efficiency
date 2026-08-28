@@ -188,6 +188,13 @@ def main():
         exist_ok=True,
     )
 
+    # =============== THÊM ĐÚNG 3 DÒNG NÀY VÀO ĐÂY ===============
+    histories = histories.sort_values(
+        [TIME_COL, USER_COL, VIDEO_COL]
+    ).reset_index(drop=True)
+    # ============================================================
+
+    # Khúc dưới này giữ nguyên như cũ
     histories.to_parquet(
         OUTPUT_FILE,
         index=False,
@@ -197,7 +204,6 @@ def main():
     print(f"  {OUTPUT_FILE}")
 
     print("\nDone.")
-
 
 if __name__ == "__main__":
     main()
