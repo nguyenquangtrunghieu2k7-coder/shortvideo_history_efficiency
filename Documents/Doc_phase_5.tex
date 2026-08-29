@@ -1,0 +1,154 @@
+\documentclass[12pt,a4paper]{article}
+
+% Khai báo các gói hỗ trợ tiếng Việt, bảng biểu và toán học
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\geometry{
+    a4paper,
+    left=25mm,
+    right=25mm,
+    top=25mm,
+    bottom=25mm
+}
+
+% Tùy chỉnh màu sắc đường link
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+}
+
+\title{\textbf{BIÊN BẢN NGHIỆM THU: GIAI ĐOẠN 5 -- LỰA CHỌN CỬA SỔ LỊCH SỬ VÀ ĐỘ DÀI TỐI ĐA}}
+\author{Dự án: How Much Intelligence Can We Get For How Little?}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\hrule
+\vspace{15pt}
+
+\section{Mục tiêu}
+Giai đoạn 5 nhằm lựa chọn hai siêu tham số cố định cho toàn bộ chuỗi thí nghiệm tiếp theo:
+\begin{itemize}[noitemsep]
+    \item Cửa sổ lịch sử $W$;
+    \item Độ dài lịch sử tối đa $L_{\max}$.
+\end{itemize}
+
+Theo protocol của đề tài, việc lựa chọn chỉ được thực hiện trên \textbf{development data}, bao gồm tập train và validation. Tập test không được sử dụng trong quá trình lựa chọn và sẽ được giữ hoàn toàn độc lập cho khâu đánh giá cuối cùng.
+
+Các giá trị ứng viên của cửa sổ thời gian được xét là:
+\[
+W \in \{1, 3, 7, 14\}\text{ ngày}.
+\]
+
+Với mỗi $W$, số lượng tương tác lịch sử đủ điều kiện tại một evaluation event $t$ được ký hiệu là: $|H_t^W|$. Các thống kê phân phối được sử dụng gồm median, P75, P90, P95, P99 và giá trị lớn nhất (Max).
+
+\section{Dữ liệu Development}
+Development set được xây dựng từ:
+\[
+\text{Development} = \text{Train} \cup \text{Validation}
+\]
+
+Cụ thể quy mô dữ liệu:
+\begin{itemize}[noitemsep]
+    \item Train: $30,118$ evaluation events;
+    \item Validation: $6,454$ evaluation events;
+    \item Tổng development: $36,572$ evaluation events.
+\end{itemize}
+
+\textit{Lưu ý:} Tập test hoàn toàn bị cô lập trong quá trình lựa chọn $W$ và $L_{\max}$. Lịch sử được tái dựng từ toàn bộ tương tác tiêu chuẩn hợp lệ, với tổng cộng $11,713,045$ interactions trên $1,000$ người dùng.
+
+\section{Phân phối Độ dài Lịch sử}
+Kết quả EDA trên development data được trình bày chi tiết trong Bảng~\ref{tab:phase5-history-distribution}.
+
+\begin{table}[h]
+\centering
+\caption{Phân phối số lượng historical interactions theo cửa sổ thời gian.}
+\label{tab:phase5-history-distribution}
+\begin{tabular}{lrrrrrr}
+\toprule
+\textbf{$W$} & \textbf{Median} & \textbf{P75} & \textbf{P90} & \textbf{P95} & \textbf{P99} & \textbf{Max} \\
+\midrule
+1 ngày  & 421.0  & 788.0    & 1,280.0  & 1,729.0  & 2,773.0   & 10,259 \\
+3 ngày  & 1,188.0 & 2,067.0  & 3,179.0  & 4,259.0  & 7,410.29  & 22,897 \\
+7 ngày  & 2,494.0 & 4,329.0  & 6,694.0  & 8,967.0  & 14,808.29 & 39,773 \\
+14 ngày & 4,771.5 & 7,949.25 & 12,503.8 & 16,272.1 & 30,276.29 & 65,642 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Kết quả cho thấy số lượng lịch sử tăng rất mạnh khi mở rộng cửa sổ thời gian. Với cửa sổ 1 ngày, trung vị lịch sử chỉ ở mức $421$ interactions, trong khi giá trị này tăng lên $4,771.5$ interactions với cửa sổ 14 ngày. Tương tự, P99 tăng từ $2,773$ lên $30,276.29$.
+
+Điều này cho thấy việc mở rộng $W$ làm tăng đáng kể lượng behavioral context, nhưng đồng thời tạo ra sequence dài hơn kéo theo chi phí tính toán lớn hơn. Do đó, sử dụng cửa sổ dài nhất không mặc nhiên đồng nghĩa với việc tối ưu hóa hiệu năng mô hình.
+
+\section{Đánh giá Độ bao phủ của $L_{\max}$}
+Để giới hạn độ dài chuỗi, các giá trị $L_{\max}$ được đánh giá dựa trên tỷ lệ evaluation events có toàn bộ history nằm trọn trong giới hạn:
+\[
+\text{Coverage}(W,L_{\max}) = P\left(|H_t^W| \leq L_{\max}\right)
+\]
+
+Kết quả kiểm thử được trình bày trong Bảng~\ref{tab:phase5-coverage}.
+
+\begin{table}[h]
+\centering
+\caption{Độ bao phủ của các giá trị $L_{\max}$ trên development data.}
+\label{tab:phase5-coverage}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{$W$} & \textbf{$L_{\max}=1024$} & \textbf{$1536$} & \textbf{$2048$} & \textbf{$4096$} \\
+\midrule
+1 ngày  & 84.38\% & 93.61\% & \textbf{96.90\%} & 99.84\% \\
+3 ngày  & 43.86\% & 62.03\% & 74.66\% & 94.55\% \\
+7 ngày  & 18.04\% & 29.61\% & 40.91\% & 72.50\% \\
+14 ngày & 7.57\%  & 13.08\% & 19.22\% & 43.59\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Kết quả chứng minh $W=1$ ngày có ưu thế tuyệt đối về khả năng kiểm soát chiều dài chuỗi. Với $L_{\max}=2048$, cấu hình này giữ được $96.90\%$ số sự kiện đánh giá nguyên vẹn lịch sử. Chỉ có $1,132$ trên tổng số $36,572$ sự kiện ($3.10\%$) vượt quá giới hạn này và phải cắt tỉa (truncate).
+
+Ngược lại, với $W=3$ ngày, mức ngân sách $L_{\max}=2048$ chỉ đạt độ bao phủ $74.66\%$. Để đạt mức bao phủ xấp xỉ $95\%$, mô hình buộc phải nới rộng $L_{\max}$ lên đến $4096$. Đối với $W \in \{7, 14\}$ ngày, ngay cả mức $4096$ cũng không thể đáp ứng (chỉ đạt $72.50\%$ và $43.59\%$).
+
+\section{Lựa chọn Cuối cùng}
+Dựa trên phân tích EDA tập development, cấu hình chính thức được lựa chọn và đóng băng là:
+\[
+\boxed{W^* = 1\text{ ngày}} \quad \text{và} \quad \boxed{L_{\max}^* = 2048}
+\]
+
+Cơ sở của quyết định này bao gồm:
+\begin{enumerate}
+    \item \textbf{Behavioral Context:} Cửa sổ 1 ngày cung cấp trung vị $421$ tương tác và P99 lên tới $2,773$, đảm bảo lượng thông tin hành vi ngắn hạn là rất phong phú và đủ để đưa ra khuyến nghị.
+    \item \textbf{Sequence Coverage:} Mức giới hạn $L_{\max}=2048$ bảo toàn nguyên vẹn lịch sử cho $96.90\%$ sự kiện, giảm thiểu rủi ro mất mát thông tin do truncation.
+    \item \textbf{Computational Feasibility:} Nếu cố nâng $L_{\max}$ lên $3072$, độ bao phủ chỉ cải thiện vi mô từ $96.90\%$ lên $99.39\%$, nhưng chiều dài chuỗi tính toán lại tăng vọt $50\%$. Do đó, $2048$ là điểm cân bằng lý tưởng nhất.
+\end{enumerate}
+
+\section{Lưu trữ Kế quả (Artifacts)}
+Các siêu dữ liệu và phân phối của Giai đoạn 5 đã được lưu lại để phục vụ tái thẩm định:
+\begin{verbatim}
+data/processed/phase5/
+    development_events.parquet
+    development_history_lengths.parquet
+    history_window_stats.csv
+    history_lmax_coverage.csv
+    selected_history_config.yaml
+\end{verbatim}
+
+\section{Kết luận}
+Giai đoạn 5 đã hoàn thành với mục tiêu lựa chọn và đóng băng (freeze) cấu hình lịch sử dựa trên tập Development. Cấu hình $W^*=1\text{ ngày}$ và $L_{\max}^*=2048$ chính thức được phê duyệt. Tập test tiếp tục được giữ nguyên trạng thái độc lập (unseen) cho Giai đoạn đánh giá cuối cùng.
+
+\vspace{10pt}
+\begin{center}
+\large\textbf{KẾT LUẬN: GIAI ĐOẠN 5 -- HOÀN THÀNH 100\%}
+\end{center}
+
+\end{document}

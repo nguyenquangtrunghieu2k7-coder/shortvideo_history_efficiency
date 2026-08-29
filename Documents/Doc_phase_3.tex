@@ -1,0 +1,59 @@
+\documentclass[12pt,a4paper]{article}
+
+% Khai báo các gói hỗ trợ tiếng Việt, định dạng cơ bản và toán học
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\usepackage{amsmath} 
+\usepackage{geometry}
+\geometry{
+    a4paper,
+    left=25mm,
+    right=25mm,
+    top=25mm,
+    bottom=25mm
+}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{xcolor}
+
+% Tùy chỉnh màu sắc cho các đường link
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+}
+
+\title{\textbf{BIÊN BẢN NGHIỆM THU: GIAI ĐOẠN 3 -- DECISION POINTS}}
+\author{Dự án: How Much Intelligence Can We Get For How Little?}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\hrule
+\vspace{15pt}
+
+\noindent Giai đoạn 3 tập trung vào việc thiết lập và đóng gói tập dữ liệu quyết định (Decision Points), ký hiệu là $D_{eval}$. Đây là nền tảng cốt lõi để các mô hình thực hiện dự đoán, đảm bảo tính toàn vẹn của thời gian và không rò rỉ dữ liệu tương lai.
+
+\section{Tổng quan Tập dữ liệu $D_{eval}$}
+\begin{itemize}
+    \item Hệ thống đã trích xuất và xây dựng thành công tập $D_{eval}$ với tổng số lượng là \textbf{43,027} đơn vị đánh giá (evaluation units).
+    \item Số lượng này khớp hoàn toàn với quần thể đánh giá can thiệp ngẫu nhiên (random exposure) đã được chốt ở Giai đoạn 2.
+\end{itemize}
+
+\section{Kiểm tra Cấu trúc Đơn vị Đánh giá (Evaluation Unit)}
+Mỗi dòng dữ liệu (evaluation unit) trong $D_{eval}$ đã được kiểm toán (audit) và xác nhận chứa đầy đủ 4 thành phần thiết yếu để phục vụ cho bài toán học máy:
+
+\begin{enumerate}
+    \item \textbf{User (Người dùng):} Trường \texttt{user\_id} có mặt để định danh người dùng.
+    \item \textbf{Timestamp (Dấu thời gian):} Trường \texttt{time\_ms} có mặt để làm mốc thời gian chốt hạ. Mọi dữ liệu lịch sử được sử dụng cho dự đoán phải xảy ra nghiêm ngặt trước thời điểm này ($t_i < t$).
+    \item \textbf{Observed Candidate (Ứng viên quan sát):} Trường \texttt{video\_id} có mặt để biểu diễn ứng viên (video) được hệ thống hiển thị cho người dùng tại thời điểm $t$.
+    \item \textbf{Target (Biến mục tiêu):} Trường \texttt{long\_view} có mặt để làm nhãn thực tế (ground truth) đánh giá hiệu năng mô hình.
+\end{enumerate}
+
+\vspace{20pt}
+\noindent\textit{\textbf{Kết luận:} Tập Decision Points $D_{eval}$ đã vượt qua 100\% các tiêu chí kiểm tra và hoàn toàn hợp lệ. Hệ thống dữ liệu đã chính thức đóng gói xong và sẵn sàng phục vụ cho bước huấn luyện mô hình cơ sở (Baseline Models).}
+
+\end{document}

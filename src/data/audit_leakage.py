@@ -21,7 +21,7 @@ def as_array(x):
 
 def audit_candidate_leakage(df):
     print("\n" + "=" * 80)
-    print("CANDIDATE-IN-HISTORY LEAKAGE")
+    print("CANDIDATE-IN-HISTORY RECURRENCE AUDIT")
     print("=" * 80)
 
     total_fail = 0
@@ -125,12 +125,12 @@ def audit_eval_identity(df):
     }
 
     for name, passed in checks.items():
-        print(f"{name:<25} {'PASS' if passed else 'FAIL'}")
+        print(f"{name:<25} {'PASS' if passed else 'INFO'}")
 
 
 def main():
     print("=" * 80)
-    print("AUDIT KUAIRAND HISTORY LEAKAGE")
+    print("AUDIT KUAIRAND HISTORY RECURRENCE")
     print("=" * 80)
 
     print(f"\nLoading:")

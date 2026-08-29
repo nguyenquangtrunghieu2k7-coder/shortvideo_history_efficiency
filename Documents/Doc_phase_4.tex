@@ -1,0 +1,190 @@
+\documentclass[12pt,a4paper]{article}
+
+% Khai báo các gói hỗ trợ tiếng Việt, bảng biểu và toán học
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\geometry{
+    a4paper,
+    left=25mm,
+    right=25mm,
+    top=25mm,
+    bottom=25mm
+}
+
+% Tùy chỉnh màu sắc đường link
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+}
+
+\title{\textbf{BIÊN BẢN NGHIỆM THU: GIAI ĐOẠN 4 -- TÁI DỰNG HISTORY}}
+\author{Dự án: How Much Intelligence Can We Get For How Little?}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\hrule
+\vspace{15pt}
+
+\section{Mục tiêu}
+Giai đoạn 4 tập trung vào việc \textbf{tái dựng lịch sử tương tác của người dùng} ($H_{W_t}$) trước mỗi sự kiện đánh giá (evaluation event). Đây là thành phần mang tính quyết định của toàn bộ nghiên cứu vì lịch sử chính là nguồn thông tin hành vi duy nhất mà mô hình được phép khai thác dưới các mức ngân sách thông tin (information budgets) khác nhau.
+
+Với một evaluation event của người dùng $u$ tại thời điểm $t$, lịch sử được định nghĩa nghiêm ngặt là tập hợp các tương tác xảy ra trước thời điểm đó:
+$$H(u,t) = \{x_{u,\tau} \mid \tau < t\}$$
+
+Điều kiện thời gian bắt buộc là \textbf{strictly before}, tức là mọi tương tác trong lịch sử đều phải thỏa mãn:
+$$\text{timestamp}(\text{history}) < \text{timestamp}(\text{evaluation})$$
+
+Các cửa sổ lịch sử (history windows) được xây dựng phục vụ cho chuỗi thực nghiệm theo các mức giới hạn:
+$$K \in \{1, 5, 10, 20, 50, 100, \text{Full}\}$$
+
+\section{Dữ liệu Sử dụng}
+Lịch sử được tái dựng hoàn toàn từ các nhật ký tương tác tiêu chuẩn (standard interaction logs):
+\begin{itemize}[noitemsep]
+    \item \texttt{log\_standard\_4\_08\_to\_4\_21\_1k.csv}
+    \item \texttt{log\_standard\_4\_22\_to\_5\_08\_1k.csv}
+\end{itemize}
+
+Quy mô dữ liệu bao gồm:
+\begin{itemize}[noitemsep]
+    \item \textbf{11,713,045} lượt tương tác tiêu chuẩn (standard interactions);
+    \item \textbf{43,027} sự kiện đánh giá (evaluation events);
+    \item \textbf{1,000} người dùng duy nhất (users).
+\end{itemize}
+
+\textit{Nguyên tắc cô lập:} Dữ liệu can thiệp ngẫu nhiên (random-intervention log) chỉ được sử dụng để xác định các evaluation events và tuyệt đối không được đưa vào nguồn lịch sử hành vi.
+
+\section{Quy trình Tái dựng History}
+Đối với mỗi evaluation event, toàn bộ các tương tác hợp lệ của cùng một user trước thời điểm evaluation được gom cụm và sắp xếp tăng dần theo thời gian. Từ Full History, các cửa sổ lịch sử gần nhất (recent-history windows) được tạo bằng cách trích xuất $K$ tương tác mới nhất:
+$$H_K(u,t) = \operatorname{Recent}_K \left( \{x_{u,\tau} \mid \tau < t\} \right)$$
+
+Toàn bộ các cửa sổ $K \in \{1, 5, 10, 20, 50, 100\}$ và Full History đã được xây dựng thành công và lưu trữ tại:
+\begin{center}
+\texttt{data/processed/evaluation\_history.parquet}
+\end{center}
+với tổng cộng đúng \textbf{43,027} đơn vị đánh giá.
+
+\section{Kiểm tra Tính Đúng đắn của History}
+
+\subsection{Độ dài History (Budget Constraints)}
+Tất cả các history windows đều tuân thủ nghiêm ngặt giới hạn ngân sách $K$ tương ứng:
+\begin{center}
+\begin{tabular}{lc}
+\toprule
+\textbf{Cửa sổ ($K$)} & \textbf{Độ dài tối đa ghi nhận} \\
+\midrule
+$K=1$   & 1 \\
+$K=5$   & 5 \\
+$K=10$  & 10 \\
+$K=20$  & 20 \\
+$K=50$  & 50 \\
+$K=100$ & 100 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Độ dài mảng thực tế đã được đối chiếu chéo với các cột metadata và không phát hiện bất kỳ sự sai lệch (mismatch) nào:
+\begin{itemize}[noitemsep]
+    \item Array thực tế vs. \texttt{history\_full\_len}: \textbf{0 mismatches};
+    \item Kiểm định tính nhất quán \texttt{history\_len\_full}: \textbf{PASS}.
+\end{itemize}
+
+\subsection{Tính Nhất quán theo Thời gian (Temporal Integrity)}
+Lịch sử được đối chiếu với mốc thời gian của từng evaluation event tương ứng:
+\begin{itemize}[noitemsep]
+    \item Vi phạm cửa sổ lịch sử (History window violations): \textbf{0};
+    \item Vi phạm thứ tự thời gian trên từng user: \textbf{0};
+    \item Giới hạn thời gian lịch sử (History temporal bounds): \textbf{PASS};
+    \item Cấu trúc sắp xếp thời gian: \textbf{0 vi phạm}.
+\end{itemize}
+
+Kết quả chứng minh không tồn tại hiện tượng rò rỉ dữ liệu tương lai (temporal leakage) trong toàn bộ quá trình tái dựng.
+
+\section{Kiểm tra Tái xuất hiện Ứng viên (Candidate-in-History)}
+Một bài kiểm toán độc lập được thực hiện để đánh giá tần suất video ứng viên của evaluation event đã từng xuất hiện trong quá khứ của người dùng:
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+\textbf{Cửa sổ lịch sử} & \textbf{Số evaluation events có candidate trong history} \\
+\midrule
+$K=1$   & 0 \\
+$K=5$   & 0 \\
+$K=10$  & 0 \\
+$K=20$  & 0 \\
+$K=50$  & 0 \\
+$K=100$ & 0 \\
+Full    & 28 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent\textbf{Đánh giá 28 trường hợp trong Full History:} Các ứng viên này chỉ xuất hiện rải rác từ rất lâu trong quá khứ và hoàn toàn biến mất trong các cửa sổ gần đây ($K \le 100$). Do đó, đây là hiện tượng \textbf{tái diễn lịch sử tự nhiên (historical recurrence)} hợp lệ, không phải lỗi kỹ thuật hay rò rỉ thông tin.
+
+\section{Xử lý Tương tác Trùng lặp (Duplicate Interaction)}
+Lịch sử được bảo toàn nguyên vẹn dưới dạng \textbf{chuỗi hành vi theo thời gian (sequence of interactions)}, không quy về tập hợp các phần tử duy nhất (unique set). 
+
+Ví dụ, chuỗi hành vi $[A, B, A, C, A]$ được giữ nguyên thay vì rút gọn thành $[A, B, C]$. Điều này bảo toàn trọn vẹn thông tin về mức độ ưa chuộng lặp lại của người dùng.
+
+\section{Phân chia Dữ liệu theo Ranh giới Thời gian}
+Tập evaluation events được phân rã nối tiếp theo thời gian thành 3 tập độc lập:
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+\textbf{Tập dữ liệu} & \textbf{Số sự kiện} & \textbf{Khoảng thời gian (\texttt{time\_ms})} \\
+\midrule
+Train       & 30,118 & 1650600645720 -- 1651756712186 \\
+Validation  & 6,454  & 1651756718363 -- 1651900133543 \\
+Test        & 6,455  & 1651900140977 -- 1652025123404 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Kiểm toán phân tách thời gian:
+\begin{itemize}[noitemsep]
+    \item $\text{Train} < \text{Validation}$: \textbf{PASS};
+    \item $\text{Validation} < \text{Test}$: \textbf{PASS};
+    \item Thứ tự thời gian trên từng user: \textbf{PASS};
+    \item Lịch sử xảy ra trước thời điểm đánh giá: \textbf{PASS}.
+\end{itemize}
+
+\section{Tổng kết Kiểm toán Giai đoạn 4}
+\begin{center}
+\begin{tabular}{p{9cm}c}
+\toprule
+\textbf{Hạng mục kiểm toán} & \textbf{Kết quả} \\
+\midrule
+Tính duy nhất của Evaluation Event & PASS \\
+Tái dựng cấu trúc History & PASS \\
+Kích thước cửa sổ History ($K$) & PASS \\
+Tính nhất quán độ dài History & PASS \\
+Tính nhất quán của Full History & PASS \\
+Thứ tự thời gian nghiêm ngặt & PASS \\
+Giới hạn cận trên thời gian lịch sử & PASS \\
+Tính toàn vẹn theo từng User & PASS \\
+Cấu trúc phân chia Train/Validation/Test & PASS \\
+Ứng viên tái xuất hiện trong $K \le 100$ & PASS \\
+Ứng viên tái xuất hiện trong Full History & INFO (Hợp lệ) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Kết luận}
+Giai đoạn 4 đã hoàn thành toàn diện việc tái dựng và kiểm chứng dữ liệu lịch sử hành vi. Dữ liệu đầu vào cho các mô hình khuyến nghị đã hoàn toàn sạch, tuân thủ chặt chẽ ngân sách thông tin và ranh giới thời gian.
+
+\vspace{10pt}
+\begin{center}
+\large\textbf{KẾT LUẬN: GIAI ĐOẠN 4 -- HOÀN THÀNH 100\%}
+\end{center}
+
+\end{document}

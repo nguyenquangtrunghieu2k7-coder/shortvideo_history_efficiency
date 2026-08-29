@@ -1,0 +1,96 @@
+\documentclass[12pt,a4paper]{article}
+
+% Khai báo các gói hỗ trợ tiếng Việt, bảng biểu và toán học
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\geometry{
+    a4paper,
+    left=25mm,
+    right=25mm,
+    top=25mm,
+    bottom=25mm
+}
+
+% Tùy chỉnh màu sắc đường link
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+}
+
+\title{\textbf{BIÊN BẢN NGHIỆM THU: GIAI ĐOẠN 6 -- LEAKAGE TESTS}}
+\author{Dự án: How Much Intelligence Can We Get For How Little?}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\hrule
+\vspace{15pt}
+
+\section{Mục tiêu}
+Giai đoạn 6 nhằm kiểm tra các invariant liên quan đến \textit{information availability}, bảo đảm rằng tại mỗi evaluation event ở thời điểm $t$, history và các thông tin đầu vào chỉ sử dụng những dữ liệu đã tồn tại trước $t$. Các kiểm tra này được xem là software correctness tests của pipeline, thay vì chỉ là các giả định được mô tả trong tài liệu.
+
+\section{Các invariant đã kiểm tra}
+Trên tập 43,027 evaluation events, các kiểm tra chính đều đạt yêu cầu.
+
+\begin{itemize}[noitemsep]
+    \item \textbf{Temporal validity:} history được xây dựng chỉ từ các interaction xảy ra trước evaluation timestamp. Kết quả được kế thừa và xác nhận từ temporal audit của Giai đoạn 4.
+    \item \textbf{History nesting:} với các cửa sổ history tăng dần, history nhỏ hơn là tập con của history lớn hơn.
+    \item \textbf{Full-history nesting:} mọi history hữu hạn đều là tập con của full history tương ứng.
+    \item \textbf{Fixed evaluation set:} evaluation population được giữ cố định giữa các cấu hình history, không phụ thuộc vào $K$.
+    \item \textbf{Fixed candidates:} candidate video được giữ nguyên giữa các cấu hình history.
+    \item \textbf{Fixed labels:} nhãn \texttt{long\_view} được xác định duy nhất cho mỗi evaluation event và không phụ thuộc vào độ dài history. Trong 43,027 events, có 39,406 mẫu với \texttt{long\_view}=0 và 3,621 mẫu với \texttt{long\_view}=1.
+    \item \textbf{History length consistency:} độ dài history thực tế phù hợp với các giá trị $K$ được quy định.
+\end{itemize}
+
+\section{Kiểm tra item features}
+Static item metadata từ \texttt{video\_features\_basic\_1k.csv} được kiểm tra về coverage và khả năng sử dụng theo thời gian. Toàn bộ 7,388 unique evaluation videos đều có metadata tương ứng.
+
+Các trường static metadata được xem là hợp lệ gồm: \texttt{author\_id}, \texttt{video\_type}, \texttt{upload\_dt}, \texttt{upload\_type}, \texttt{visible\_status}, \texttt{video\_duration}, \texttt{server\_width}, \texttt{server\_height}, \texttt{music\_id}, \texttt{music\_type} và \texttt{tag}.
+
+Ngược lại, \texttt{video\_features\_statistic\_1k.csv} được loại khỏi feature candidate vì các aggregate behavioral statistics có khả năng chứa thông tin phát sinh sau thời điểm evaluation.
+
+\section{Kết quả}
+Các invariant phía data và history đã được kiểm tra đều đạt:
+
+\begin{center}
+\begin{tabular}{lc}
+\toprule
+\textbf{Invariant} & \textbf{Kết quả} \\
+\midrule
+Temporal validity & PASS \\
+History nesting & PASS \\
+Full-history nesting & PASS \\
+Fixed evaluation set & PASS \\
+Fixed candidates & PASS \\
+Fixed labels & PASS \\
+History length consistency & PASS \\
+Static metadata coverage & PASS \\
+Future aggregate statistics & EXCLUDED \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Một số invariant phụ thuộc vào implementation của model chưa được kiểm tra ở giai đoạn này, bao gồm \textit{constant parameter count} và \textit{frozen inference}. Hai kiểm tra này sẽ được thực hiện sau khi model và inference pipeline được triển khai.
+
+\section{Kết luận}
+Giai đoạn 6 đã hoàn tất phần kiểm định leakage ở mức data và history construction. Evaluation set, candidate, label và history được giữ độc lập với cấu hình $K$, trong khi các nguồn thông tin có nguy cơ chứa future-dependent statistics đã được loại khỏi feature candidate.
+
+Do đó, pipeline dữ liệu hiện tại đáp ứng các invariant leakage cơ bản cần thiết để chuyển sang giai đoạn triển khai và đánh giá model.
+
+\vspace{10pt}
+\begin{center}
+\large\textbf{KẾT LUẬN: GIAI ĐOẠN 6 -- HOÀN THÀNH (DATA LEVEL)}
+\end{center}
+
+\end{document}
