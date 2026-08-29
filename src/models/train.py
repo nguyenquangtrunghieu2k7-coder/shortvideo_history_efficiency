@@ -1,200 +1,196 @@
-from pathlib import Path
+from __future__ import annotations
+
+import json
 import random
+from pathlib import Path
 
 import numpy as np
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset
+from torch import nn
+from torch.utils.data import DataLoader
 
-from .recommender import HistoryVideoRecommender
-
-
-ROOT = Path(__file__).resolve().parents[2]
-OUT_DIR = ROOT / "data/processed/phase8"
-
-K_VALUES = [0, 1, 5, 10, 20, 50, 100, "Full"]
-
-
-def get_device():
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-
-    return torch.device("cpu")
+from src.evaluation.evaluate import evaluate_model
 
 
 def seed_everything(seed=42):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
-class TrainDataset(Dataset):
+def get_device(preferred="auto"):
+    if preferred == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA requested but unavailable.")
+        return torch.device("cuda")
 
-    def __init__(self, frames):
-        self.rows = []
+    if preferred == "mps":
+        if not (torch.backends.mps.is_available() and torch.backends.mps.is_built()):
+            raise RuntimeError("MPS requested but unavailable.")
+        return torch.device("mps")
 
-        for k, df in frames.items():
-            for row in df.itertuples():
-                self.rows.append(
-                    (
-                        row.video_id,
-                        list(row.history),
-                        row.long_view,
-                    )
-                )
+    if preferred == "cpu":
+        return torch.device("cpu")
 
-    def __len__(self):
-        return len(self.rows)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
 
-    def __getitem__(self, idx):
-        video_id, history, label = self.rows[idx]
+    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        return torch.device("mps")
 
-        return {
-            "video_id": torch.tensor(
-                video_id,
-                dtype=torch.long,
-            ),
+    return torch.device("cpu")
+
+
+def _epoch_path(run_dir, epoch):
+    return run_dir / "checkpoints" / f"epoch_{epoch:03d}.pt"
+
+
+def save_checkpoint(path, model, optimizer, epoch, best_auc, history):
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    torch.save(
+        {
+            "epoch": epoch,
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "best_auc": best_auc,
             "history": history,
-            "label": torch.tensor(
-                label,
-                dtype=torch.float32,
-            ),
-        }
-
-
-def collate_fn(batch):
-
-    max_len = max(
-        len(x["history"])
-        for x in batch
+        },
+        path,
     )
 
-    histories = []
-    masks = []
 
-    for x in batch:
-        h = x["history"]
+def find_latest_checkpoint(run_dir):
+    paths = sorted((run_dir / "checkpoints").glob("epoch_*.pt"))
+    return paths[-1] if paths else None
 
-        pad = max_len - len(h)
 
-        histories.append(
-            h + [0] * pad
-        )
+def load_best_checkpoint(run_dir, model, device):
+    path = run_dir / "checkpoints" / "best.pt"
+    if not path.exists():
+        return model, None
 
-        masks.append(
-            [1] * len(h) + [0] * pad
-        )
-
-    return {
-        "video_id": torch.stack(
-            [x["video_id"] for x in batch]
-        ),
-        "history": torch.tensor(
-            histories,
-            dtype=torch.long,
-        ),
-        "mask": torch.tensor(
-            masks,
-            dtype=torch.bool,
-        ),
-        "label": torch.stack(
-            [x["label"] for x in batch]
-        ),
-    }
+    ckpt = torch.load(path, map_location=device)
+    model.load_state_dict(ckpt["model_state"])
+    return model, ckpt
 
 
 def train_model(
-    train_frames,
-    num_videos,
-    epochs=5,
-    batch_size=512,
+    model,
+    train_loader,
+    val_loader,
+    device,
+    run_dir,
+    epochs=10,
     lr=1e-3,
+    resume=True,
 ):
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "checkpoints").mkdir(parents=True, exist_ok=True)
 
-    seed_everything()
+    model.to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    criterion = nn.BCEWithLogitsLoss()
 
-    device = get_device()
+    start_epoch = 1
+    best_auc = -float("inf")
+    history = []
 
-    print(f"Training device: {device}")
+    latest = find_latest_checkpoint(run_dir) if resume else None
 
-    dataset = TrainDataset(train_frames)
+    if latest is not None:
+        ckpt = torch.load(latest, map_location=device)
+        model.load_state_dict(ckpt["model_state"])
+        optimizer.load_state_dict(ckpt["optimizer_state"])
+        start_epoch = int(ckpt["epoch"]) + 1
+        best_auc = float(ckpt["best_auc"])
+        history = ckpt.get("history", [])
+        print(f"Resume: {latest} -> epoch {start_epoch}")
 
-    loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=collate_fn,
-    )
-
-    model = HistoryVideoRecommender(
-        num_videos=num_videos,
-    ).to(device)
-
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=lr,
-    )
-
-    loss_fn = nn.BCEWithLogitsLoss()
-
-    model.train()
-
-    for epoch in range(epochs):
-
+    for epoch in range(start_epoch, epochs + 1):
+        model.train()
         total_loss = 0.0
+        n = 0
 
-        for batch in loader:
+        for batch in train_loader:
+            video = batch["video_id"].to(device)
+            history_x = batch["history"].to(device)
+            history_len = batch["history_len"].to(device)
+            y = batch["label"].to(device)
 
-            video_id = batch["video_id"].to(device)
-            history = batch["history"].to(device)
-            mask = batch["mask"].to(device)
-            label = batch["label"].to(device)
+            optimizer.zero_grad(set_to_none=True)
 
-            optimizer.zero_grad()
-
-            logits = model(
-                video_id,
-                history,
-                mask,
-            )
-
-            loss = loss_fn(
-                logits,
-                label,
-            )
+            logits = model(video, history_x, history_len)
+            loss = criterion(logits, y)
 
             loss.backward()
             optimizer.step()
 
-            total_loss += loss.item()
+            bs = y.numel()
+            total_loss += float(loss.item()) * bs
+            n += bs
 
-        mean_loss = total_loss / len(loader)
+        train_loss = total_loss / max(n, 1)
+        val_metrics = evaluate_model(model, val_loader, device)
+        val_auc = val_metrics["auc"]
 
-        print(
-            f"Epoch {epoch + 1}/{epochs} "
-            f"- loss={mean_loss:.5f}"
+        record = {
+            "epoch": epoch,
+            "train_loss": train_loss,
+            "val_auc": val_auc,
+        }
+        history.append(record)
+
+        # Save the epoch checkpoint immediately.
+        epoch_path = _epoch_path(run_dir, epoch)
+        save_checkpoint(
+            epoch_path,
+            model,
+            optimizer,
+            epoch,
+            best_auc,
+            history,
         )
 
-    OUT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+        # Also maintain an explicit last.pt.
+        save_checkpoint(
+            run_dir / "checkpoints" / "last.pt",
+            model,
+            optimizer,
+            epoch,
+            best_auc,
+            history,
+        )
 
-    checkpoint = OUT_DIR / "history_video_model.pt"
+        if np.isfinite(val_auc) and val_auc > best_auc:
+            best_auc = float(val_auc)
+            save_checkpoint(
+                run_dir / "checkpoints" / "best.pt",
+                model,
+                optimizer,
+                epoch,
+                best_auc,
+                history,
+            )
 
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "num_videos": num_videos,
-            "embedding_dim": 64,
-            "hidden_dim": 128,
-        },
-        checkpoint,
-    )
+        with open(run_dir / "metrics.json", "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "device": str(device),
+                    "best_validation_auc": best_auc,
+                    "history": history,
+                },
+                f,
+                indent=2,
+            )
 
-    print(f"Saved checkpoint:\n  {checkpoint}")
+        print(
+            f"epoch {epoch:03d}/{epochs} | "
+            f"loss={train_loss:.5f} | val_auc={val_auc:.6f}"
+        )
 
-    return model
+    # Always return the best validation model, not merely the last epoch.
+    model, best_ckpt = load_best_checkpoint(run_dir, model, device)
+    return model, history, best_auc

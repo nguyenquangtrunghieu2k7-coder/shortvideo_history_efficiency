@@ -1,56 +1,58 @@
-from pathlib import Path
+from __future__ import annotations
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+from pathlib import Path
+from sklearn.metrics import roc_auc_score
 
 
-ROOT = Path(__file__).resolve().parents[2]
-
-TRAIN_LOG = (
-    ROOT
-    / "data/raw/KuaiRand-1K/KuaiRand-1K/data"
-    / "log_standard_4_08_to_4_21_1k.csv"
-)
-
-OUT_DIR = ROOT / "data/processed/phase8"
-OUT_FILE = OUT_DIR / "frozen_popularity.parquet"
+def compute_popularity_from_training_interactions(train_df):
+    counts = train_df["video_id"].value_counts()
+    return {int(k): int(v) for k, v in counts.items()}
 
 
-def build_popularity():
-    print("=" * 80)
-    print("BUILD FROZEN POPULARITY BASELINE")
-    print("=" * 80)
-
-    print(f"Loading:\n  {TRAIN_LOG}")
-
-    df = pd.read_csv(
-        TRAIN_LOG,
-        usecols=["video_id"],
+def score_popularity(df, popularity):
+    return np.asarray(
+        [popularity.get(int(v), 0) for v in df["video_id"]],
+        dtype=np.float64,
     )
 
-    counts = (
-        df["video_id"]
-        .value_counts()
-        .rename("interaction_count")
-        .reset_index()
-        .rename(columns={"index": "video_id"})
+
+def evaluate_popularity(df, popularity):
+    y = df["long_view"].to_numpy()
+    scores = score_popularity(df, popularity)
+
+    auc = (
+        float(roc_auc_score(y, scores))
+        if np.unique(y).size > 1
+        else float("nan")
     )
 
-    counts["video_id"] = counts["video_id"].astype(np.int64)
-
-    # Log transform reduces domination by extremely popular videos.
-    counts["popularity_score"] = np.log1p(
-        counts["interaction_count"]
-    ).astype(np.float32)
-
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    counts.to_parquet(OUT_FILE, index=False)
-
-    print(f"Videos: {len(counts):,}")
-    print(f"Saved: {OUT_FILE}")
-
-    return counts
+    return {
+        "auc": auc,
+        "n": int(len(y)),
+        "positive_rate": float(y.mean()),
+        "unique_training_videos": int(len(popularity)),
+    }
 
 
-if __name__ == "__main__":
-    build_popularity()
+def save_popularity(popularity, path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    pd.DataFrame(
+        {
+            "video_id": list(popularity.keys()),
+            "popularity_count": list(popularity.values()),
+        }
+    ).sort_values("video_id").to_parquet(path, index=False)
+
+
+def load_popularity(path: Path):
+    df = pd.read_parquet(path)
+
+    return dict(
+        zip(
+            df["video_id"].astype(int),
+            df["popularity_count"].astype(int),
+        )
+    )

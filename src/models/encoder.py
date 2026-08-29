@@ -1,48 +1,37 @@
+from __future__ import annotations
+
 import torch
-import torch.nn as nn
+from torch import nn
 
 
 class VideoEncoder(nn.Module):
-
-    def __init__(
-        self,
-        num_videos,
-        embedding_dim=64,
-    ):
+    def __init__(self, n_videos, dim=64):
         super().__init__()
-
         self.embedding = nn.Embedding(
-            num_videos + 1,
-            embedding_dim,
+            n_videos + 1,
+            dim,
             padding_idx=0,
         )
 
-    def forward(self, video_ids):
-        return self.embedding(video_ids)
+    def forward(self, video_id):
+        return self.embedding(video_id)
 
 
 class HistoryEncoder(nn.Module):
-
-    def __init__(
-        self,
-        num_videos,
-        embedding_dim=64,
-    ):
+    def __init__(self, n_videos, dim=64):
         super().__init__()
-
         self.embedding = nn.Embedding(
-            num_videos + 1,
-            embedding_dim,
+            n_videos + 1,
+            dim,
             padding_idx=0,
         )
 
-    def forward(self, history_ids, mask):
-        emb = self.embedding(history_ids)
+    def forward(self, history, history_len):
+        x = self.embedding(history)
 
-        mask = mask.unsqueeze(-1).float()
+        mask = (history != 0).unsqueeze(-1)
+        x = x * mask
 
-        emb = emb * mask
+        denom = history_len.clamp_min(1).to(x.dtype).unsqueeze(-1)
 
-        length = mask.sum(dim=1).clamp(min=1.0)
-
-        return emb.sum(dim=1) / length
+        return x.sum(dim=1) / denom

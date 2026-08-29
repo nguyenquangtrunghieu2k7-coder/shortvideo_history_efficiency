@@ -1,41 +1,23 @@
-import torch
-import torch.nn as nn
+from __future__ import annotations
+
+from torch import nn
 
 from .encoder import HistoryEncoder
 
 
-class HistoryOnlyRecommender(nn.Module):
-
-    def __init__(
-        self,
-        num_videos,
-        embedding_dim=64,
-        hidden_dim=128,
-    ):
+class HistoryOnlyModel(nn.Module):
+    def __init__(self, n_videos, dim=64, hidden=128):
         super().__init__()
 
-        self.history_encoder = HistoryEncoder(
-            num_videos,
-            embedding_dim,
-        )
+        self.history = HistoryEncoder(n_videos, dim)
 
-        self.mlp = nn.Sequential(
-            nn.Linear(
-                embedding_dim,
-                hidden_dim,
-            ),
+        self.head = nn.Sequential(
+            nn.Linear(dim, hidden),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 1),
+            nn.Dropout(0.1),
+            nn.Linear(hidden, 1),
         )
 
-    def forward(
-        self,
-        history,
-        history_mask,
-    ):
-        x = self.history_encoder(
-            history,
-            history_mask,
-        )
-
-        return self.mlp(x).squeeze(-1)
+    def forward(self, video_id, history, history_len):
+        history_x = self.history(history, history_len)
+        return self.head(history_x).squeeze(-1)
