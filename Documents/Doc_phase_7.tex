@@ -1,0 +1,142 @@
+\documentclass[12pt,a4paper]{article}
+
+% Khai báo các gói hỗ trợ tiếng Việt, bảng biểu và toán học
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\geometry{
+    a4paper,
+    left=25mm,
+    right=25mm,
+    top=25mm,
+    bottom=25mm
+}
+
+% Tùy chỉnh màu sắc đường link
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+}
+
+\title{\textbf{BIÊN BẢN NGHIỆM THU: GIAI ĐOẠN 7 -- SINH CÁC CẤU HÌNH HISTORY}}
+\author{Dự án: How Much Intelligence Can We Get For How Little?}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\hrule
+\vspace{15pt}
+
+\section{Mục tiêu}
+Giai đoạn 7 tiến hành xây dựng các mức ngân sách lịch sử hành vi $K$ trên tập evaluation cố định. Quá trình này dựa trên cấu hình đã được lựa chọn và đóng băng (freeze) từ giai đoạn phát triển (Giai đoạn 5):
+\begin{itemize}[noitemsep]
+    \item Cửa sổ thời gian: $W = 1$ ngày;
+    \item Giới hạn độ dài lịch sử tối đa: $L_{\max} = 2048$;
+    \item Các mức ngân sách thực nghiệm:
+    \[
+    K \in \{0, 1, 5, 10, 20, 50, 100, \text{Full}\}
+    \]
+\end{itemize}
+
+\textit{Lưu ý:} Tập test hoàn toàn không được sử dụng trong quá trình xây dựng các cấu hình history này nhằm đảm bảo tính độc lập tuyệt đối.
+
+\section{Phương pháp Xây dựng}
+Để tối ưu hóa chi phí tính toán và tránh tiền xử lý dư thừa, thay vì tái dựng history riêng biệt cho từng giá trị $K$, hệ thống tiến hành tái dựng một lần duy nhất lịch sử đầy đủ trong cửa sổ thời gian $W=1$ ngày:
+\[
+H_t^{(W)} = \{e_i \mid t-W \leq t_i < t\}
+\]
+Điều kiện $t_i < t$ được áp dụng nghiêm ngặt nhằm đảm bảo không có bất kỳ interaction nào xảy ra tại hoặc sau timestamp của evaluation event bị lọt vào history.
+
+Sau khi xây dựng $H_t^{(W)}$, các cấu hình $K$ hữu hạn được tạo ra bằng phép cắt mảng (slicing), lấy $K$ interaction gần nhất:
+\[
+H_t^{(K)} = \operatorname{Last}_{\min(K, L_{\max})} \left(H_t^{(W)}\right)
+\]
+
+Đối với trường hợp $K=0$ (Video-only baseline), lịch sử là tập rỗng:
+\[
+H_t^{(0)} = \emptyset
+\]
+
+Đối với cấu hình \text{Full}, protocol sử dụng giới hạn $L_{\max}$:
+\[
+H_t^{(\text{Full})} = \operatorname{Last}_{L_{\max}} \left(H_t^{(W)}\right)
+\]
+Do đó, cấu hình "Full" không biểu diễn toàn bộ timeline vô hạn của người dùng, mà biểu diễn toàn bộ history hợp lệ trong cửa sổ $W=1$ ngày, sau khi đã áp dụng giới hạn cắt tỉa $L_{\max}=2048$.
+
+\section{Kết quả Xây dựng}
+Quá trình sinh lịch sử được thực hiện trên tổng cộng $43,027$ evaluation events. Lịch sử $W=1$ ngày được tái dựng từ $11,713,045$ standard interactions.
+
+\begin{table}[h]
+\centering
+\caption{Thống kê độ dài các mức ngân sách lịch sử $K$}
+\label{tab:phase7-history-stats}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{$K$} & \textbf{Mean length} & \textbf{Median} & \textbf{Max} & \textbf{Zero history} \\
+\midrule
+0    & 0.00   & 0   & 0    & 43,027 \\
+1    & 1.00   & 1   & 1    & 93 \\
+5    & 4.98   & 5   & 5    & 93 \\
+10   & 9.95   & 10  & 10   & 93 \\
+20   & 19.83  & 20  & 20   & 93 \\
+50   & 48.86  & 50  & 50   & 93 \\
+100  & 94.82  & 100 & 100  & 93 \\
+Full & 574.55 & 419 & 2048 & 93 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Phân tích dữ liệu:
+\begin{itemize}
+    \item Lịch sử $H_t^{(1\text{day})}$ ban đầu (trước khi áp dụng $L_{\max}$) có độ dài trung bình là $603.15$, trung vị $419$ và giá trị lớn nhất (maximum) lên tới $10,259$. 
+    \item Sau khi áp dụng giới hạn ngân sách Full ở mức $L_{\max}=2048$, giá trị maximum giảm xuống đúng $2048$ và độ dài trung bình giảm còn $574.55$.
+    \item Có đúng $93$ evaluation events không có bất kỳ interaction hợp lệ nào trong cửa sổ 1 ngày. Các sự kiện này \textbf{vẫn được giữ lại} trong evaluation set và được biểu diễn bằng history rỗng, tuân thủ tuyệt đối quy tắc xử lý thiếu history của protocol.
+\end{itemize}
+
+\section{Lưu trữ Kết quả (Artifacts)}
+Toàn bộ các cấu hình history đã được lưu trữ độc lập tại thư mục:
+\begin{verbatim}
+data/processed/phase7/
+\end{verbatim}
+Danh sách các tệp dữ liệu bao gồm:
+\begin{itemize}[noitemsep]
+    \item \texttt{history\_K0.parquet}
+    \item \texttt{history\_K1.parquet}
+    \item \texttt{history\_K5.parquet}
+    \item \texttt{history\_K10.parquet}
+    \item \texttt{history\_K20.parquet}
+    \item \texttt{history\_K50.parquet}
+    \item \texttt{history\_K100.parquet}
+    \item \texttt{history\_KFull.parquet}
+    \item \texttt{history\_config.yaml}
+    \item \texttt{history\_config\_summary.csv}
+\end{itemize}
+
+\section{Kiểm tra Protocol (Audit)}
+Các invariant cốt lõi của Giai đoạn 7 đã được xác nhận:
+\begin{itemize}[noitemsep]
+    \item Cấu hình $W=1$ ngày: \textbf{FROZEN}
+    \item Cấu hình $L_{\max}=2048$: \textbf{FROZEN}
+    \item Evaluation set cố định giữa các mức $K$: \textbf{PASS}
+    \item Không rò rỉ dữ liệu từ tập Test: \textbf{PASS}
+    \item Tối ưu hóa tính toán (xây dựng history 1 lần): \textbf{PASS}
+    \item Sinh các mức $K$ bằng phương pháp Slicing: \textbf{PASS}
+\end{itemize}
+
+\vspace{10pt}
+\begin{center}
+\large\textbf{KẾT LUẬN: GIAI ĐOẠN 7 -- HOÀN THÀNH 100\%}
+\end{center}
+\noindent Dữ liệu của tất cả các ngân sách $K$ đã được đóng băng và hoàn toàn sẵn sàng để đưa vào pipeline huấn luyện mô hình (Giai đoạn 8 \& 9).
+
+\end{document}
