@@ -26,4 +26,4 @@ reports/
 .DS_Store
 
 # Python tooling
-*.egg-info/
+*.egg-info/models/*.pth

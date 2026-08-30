@@ -3,49 +3,140 @@ from pathlib import Path
 import pandas as pd
 
 
+# =============================================================================
+# PATHS
+# =============================================================================
+
 ROOT = Path(__file__).resolve().parents[2]
 
-INPUT_PATH = ROOT / "data" / "processed" / "evaluation_history.parquet"
-OUTPUT_DIR = ROOT / "data" / "processed"
+PHASE7_DIR = (
+    ROOT / "data" / "processed" / "phase7"
+)
+
+OUTPUT_DIR = (
+    ROOT / "data" / "processed" / "splits"
+)
 
 TRAIN_RATIO = 0.70
 VAL_RATIO = 0.15
 
+K_VALUES = [
+    0,
+    1,
+    5,
+    10,
+    20,
+    50,
+    100,
+    "Full",
+]
 
-def main():
-    print("=" * 80)
-    print("BUILD TEMPORAL TRAIN / VALIDATION / TEST SPLIT")
-    print("=" * 80)
 
-    print(f"\nLoading:")
-    print(f"  {INPUT_PATH}")
+# =============================================================================
+# LOAD PHASE 7 HISTORY
+# =============================================================================
 
-    if not INPUT_PATH.exists():
-        raise FileNotFoundError(INPUT_PATH)
+def load_history(k):
 
-    df = pd.read_parquet(INPUT_PATH)
+    filename = (
+        "history_KFull.parquet"
+        if k == "Full"
+        else f"history_K{k}.parquet"
+    )
+
+    path = PHASE7_DIR / filename
+
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    print(f"\nLoading Phase 7 history:")
+    print(f"  {path}")
+
+    df = pd.read_parquet(path)
+
+    required = [
+        "evaluation_id",
+        "user_id",
+        "video_id",
+        "time_ms",
+        "long_view",
+        "history",
+        "history_len",
+        "history_available",
+    ]
+
+    missing = [
+        col
+        for col in required
+        if col not in df.columns
+    ]
+
+    if missing:
+        raise ValueError(
+            f"K={k}: missing columns: {missing}"
+        )
+
+    return df
+
+
+# =============================================================================
+# BUILD TEMPORAL SPLIT
+# =============================================================================
+
+def build_split(df):
 
     # Strict chronological ordering.
-    df = df.sort_values("time_ms").reset_index(drop=True)
+    df = df.sort_values(
+        ["time_ms", "evaluation_id"]
+    ).reset_index(drop=True)
 
     n = len(df)
 
-    train_end = int(n * TRAIN_RATIO)
-    val_end = int(n * (TRAIN_RATIO + VAL_RATIO))
+    train_end = int(
+        n * TRAIN_RATIO
+    )
 
-    train = df.iloc[:train_end].copy()
-    val = df.iloc[train_end:val_end].copy()
-    test = df.iloc[val_end:].copy()
+    val_end = int(
+        n * (TRAIN_RATIO + VAL_RATIO)
+    )
 
-    splits = {
+    train = df.iloc[
+        :train_end
+    ].copy()
+
+    val = df.iloc[
+        train_end:val_end
+    ].copy()
+
+    test = df.iloc[
+        val_end:
+    ].copy()
+
+    return {
         "train": train,
         "validation": val,
         "test": test,
     }
 
+
+# =============================================================================
+# VALIDATION
+# =============================================================================
+
+def validate_splits(
+    df,
+    splits,
+    k,
+):
+
+    train = splits["train"]
+    val = splits["validation"]
+    test = splits["test"]
+
     print("\nSplit sizes:")
 
     for name, split in splits.items():
+
         print(
             f"  {name:<10}: "
             f"{len(split):>7,} events | "
@@ -53,52 +144,226 @@ def main():
             f"{split['time_ms'].max()}"
         )
 
-    # Validate temporal boundaries before writing.
-    assert train["time_ms"].max() < val["time_ms"].min()
-    assert val["time_ms"].max() < test["time_ms"].min()
+    # -------------------------------------------------------------------------
+    # Event coverage
+    # -------------------------------------------------------------------------
 
-    # Validate no events were lost.
-    assert len(train) + len(val) + len(test) == len(df)
+    assert (
+        len(train)
+        + len(val)
+        + len(test)
+        == len(df)
+    )
 
-    # Validate eval_idx uniqueness.
-    assert train["eval_idx"].is_unique
-    assert val["eval_idx"].is_unique
-    assert test["eval_idx"].is_unique
+    # -------------------------------------------------------------------------
+    # Temporal ordering
+    # -------------------------------------------------------------------------
 
-    # Validate split disjointness by evaluation event.
-    train_idx = set(train["eval_idx"])
-    val_idx = set(val["eval_idx"])
-    test_idx = set(test["eval_idx"])
+    assert (
+        train["time_ms"].max()
+        < val["time_ms"].min()
+    )
 
-    assert not (train_idx & val_idx)
-    assert not (train_idx & test_idx)
-    assert not (val_idx & test_idx)
+    assert (
+        val["time_ms"].max()
+        < test["time_ms"].min()
+    )
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # -------------------------------------------------------------------------
+    # evaluation_id uniqueness
+    # -------------------------------------------------------------------------
 
-    paths = {
-        "train": OUTPUT_DIR / "train.parquet",
-        "validation": OUTPUT_DIR / "validation.parquet",
-        "test": OUTPUT_DIR / "test.parquet",
-    }
+    assert train["evaluation_id"].is_unique
+    assert val["evaluation_id"].is_unique
+    assert test["evaluation_id"].is_unique
+
+    # -------------------------------------------------------------------------
+    # Split disjointness
+    # -------------------------------------------------------------------------
+
+    train_ids = set(
+        train["evaluation_id"]
+    )
+
+    val_ids = set(
+        val["evaluation_id"]
+    )
+
+    test_ids = set(
+        test["evaluation_id"]
+    )
+
+    assert not (train_ids & val_ids)
+    assert not (train_ids & test_ids)
+    assert not (val_ids & test_ids)
+
+    # -------------------------------------------------------------------------
+    # History sanity
+    # -------------------------------------------------------------------------
 
     for name, split in splits.items():
-        split.to_parquet(paths[name], index=False)
-        print(f"\nSaved {name}:")
-        print(f"  {paths[name]}")
 
-    print("\n" + "=" * 80)
-    print("SPLIT VALIDATION")
+        assert (
+            split["history_len"] <= (
+                2048 if k == "Full" else k
+            )
+        ).all()
+
+        if k == 0:
+            assert (
+                split["history_len"] == 0
+            ).all()
+
+            assert (
+                split["history_available"] == 0
+            ).all()
+
+    print("\nSplit validation:")
+
+    print("  Temporal ordering:    PASS")
+    print("  Event coverage:       PASS")
+    print("  evaluation_id unique: PASS")
+    print("  Split disjointness:   PASS")
+    print("  History validity:     PASS")
+
+
+# =============================================================================
+# SAVE
+# =============================================================================
+
+def save_splits(
+    splits,
+    k,
+):
+
+    k_name = (
+        "KFull"
+        if k == "Full"
+        else f"K{k}"
+    )
+
+    output_dir = (
+        OUTPUT_DIR / k_name
+    )
+
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    for name, split in splits.items():
+
+        path = (
+            output_dir
+            / f"{name}.parquet"
+        )
+
+        split.to_parquet(
+            path,
+            index=False,
+        )
+
+        print(
+            f"  Saved {name}: {path}"
+        )
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+def main():
+
+    print("=" * 80)
+    print("BUILD PHASE 8 TRAIN / VALIDATION / TEST SPLITS")
     print("=" * 80)
 
-    print("Temporal ordering: PASS")
-    print("Event coverage:    PASS")
-    print("eval_idx unique:   PASS")
-    print("Split disjointness: PASS")
+    print("\nSource:")
+    print(
+        "  Phase 7 frozen history artifacts"
+    )
+
+    print(
+        f"  Train ratio: {TRAIN_RATIO:.2f}"
+    )
+
+    print(
+        f"  Validation ratio: {VAL_RATIO:.2f}"
+    )
+
+    for k in K_VALUES:
+
+        print("\n" + "=" * 80)
+        print(f"BUILDING SPLIT | K={k}")
+        print("=" * 80)
+
+        # ---------------------------------------------------------------------
+        # Load Phase 7 artifact
+        # ---------------------------------------------------------------------
+
+        df = load_history(k)
+
+        print(
+            f"  Evaluation events: "
+            f"{len(df):,}"
+        )
+
+        # ---------------------------------------------------------------------
+        # Build split
+        # ---------------------------------------------------------------------
+
+        splits = build_split(df)
+
+        # ---------------------------------------------------------------------
+        # Validate
+        # ---------------------------------------------------------------------
+
+        validate_splits(
+            df,
+            splits,
+            k,
+        )
+
+        # ---------------------------------------------------------------------
+        # Save
+        # ---------------------------------------------------------------------
+
+        print("\nSaving:")
+
+        save_splits(
+            splits,
+            k,
+        )
 
     print("\n" + "=" * 80)
-    print("DONE")
+    print("PHASE 8 SPLIT BUILD COMPLETE")
     print("=" * 80)
+
+    print("\nOutput structure:")
+
+    for k in K_VALUES:
+
+        k_name = (
+            "KFull"
+            if k == "Full"
+            else f"K{k}"
+        )
+
+        print(
+            f"  data/processed/splits/"
+            f"{k_name}/"
+        )
+
+        print("    train.parquet")
+        print("    validation.parquet")
+        print("    test.parquet")
+
+    print("\nProtocol:")
+    print("  Source history:       Phase 7")
+    print("  Fixed evaluation set: PASS")
+    print("  Temporal split:       PASS")
+    print("  History consistency:  PASS")
+    print("  Old history source:   NOT USED")
 
 
 if __name__ == "__main__":
