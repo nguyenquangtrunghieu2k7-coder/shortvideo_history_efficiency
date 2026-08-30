@@ -30,7 +30,7 @@ BATCH_SIZE = 2048
 LEARNING_RATE = 1e-3
 EPOCHS = 20
 PATIENCE = 3 # Early stopping patience
-NUM_VIDEOS = 7387 # Cần thay bằng số lượng video thực tế lớn nhất trong tập từ vựng của ông
+NUM_VIDEOS = 7387 # Số lượng video thực tế lớn nhất
 
 # =============================================================================
 # DATASET
@@ -40,30 +40,31 @@ class KuaiRandDataset(Dataset):
         super().__init__()
         print(f"Loading data cho tập {split_name} (K={k_budget})...")
         
-        # Load tập đánh giá (Train/Val/Test)
-        eval_df = pd.read_parquet(PROCESSED_DIR / f"{split_name}.parquet")
+        # 1. Load split file (chứa eval_idx và các cột history)
+        split_df = pd.read_parquet(PROCESSED_DIR / f"{split_name}.parquet")
         
-        # Load lịch sử tương ứng
-        history_file = "history_KFull.parquet" if k_budget == "full" else f"history_K{k_budget}.parquet"
-        hist_df = pd.read_parquet(PROCESSED_DIR / history_file)
+        # 2. Load evaluation_events (chứa candidate video_id và nhãn long_view)
+        events_df = pd.read_parquet(PROCESSED_DIR / "evaluation_events.parquet")
+        # Giữ lại các cột cần thiết để merge
+        events_df = events_df[['evaluation_id', 'video_id', 'long_view']]
         
-        # Merge để lấy lịch sử khớp với từng sự kiện đánh giá
-        merged = pd.merge(eval_df, hist_df, on="eval_idx", how="inner")
+        # 3. Kết nối dữ liệu dựa trên eval_idx == evaluation_id
+        merged = pd.merge(split_df, events_df, left_on="eval_idx", right_on="evaluation_id", how="inner")
         
-        # Trích xuất Tensor
+        # Trích xuất Tensor cho Candidate và Label
         self.candidate_ids = torch.tensor(merged["video_id"].values, dtype=torch.long)
         self.labels = torch.tensor(merged["long_view"].values, dtype=torch.float32)
         
-        # Xử lý mảng history_ids
-        hist_col = f"history_{k_budget}" if k_budget != "full" else "history_full"
-        
+        # 4. Xử lý mảng history_ids
         if k_budget == 0:
-            # Nếu K=0, history là mảng rỗng, ta tạo tensor dummy
+            # Nếu K=0, history là mảng rỗng, ta tạo tensor dummy (tất cả bằng 0)
             self.history_ids = torch.zeros((len(merged), 1), dtype=torch.long)
             self.history_mask = torch.zeros((len(merged), 1), dtype=torch.float32)
         else:
-            # Pad sequences cho bằng nhau trong cùng một dataset
+            hist_col = f"history_{k_budget}" if k_budget != "full" else "history_full"
             hist_lists = merged[hist_col].tolist()
+            
+            # Tính max_len để padding
             max_len = max(len(lst) if lst is not None else 0 for lst in hist_lists)
             max_len = max(max_len, 1) # Ít nhất là 1 để tránh lỗi tensor rỗng
             
