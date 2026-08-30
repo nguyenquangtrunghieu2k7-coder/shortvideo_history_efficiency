@@ -1,0 +1,1418 @@
+====================================================================================================
+PHASE 8 CONTEXT DUMP
+====================================================================================================
+
+
+####################################################################################################
+# 1. SOURCE FILES
+####################################################################################################
+
+====================================================================================================
+FILE: src/evaluation/audit_phase8_schema.py
+====================================================================================================
+# -*- coding: utf-8 -*-
+from pathlib import Path
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = ROOT / "data" / "processed"
+
+EVAL_EVENTS_FILE = DATA_DIR / "evaluation_events.parquet"
+EVAL_HISTORY_FILE = DATA_DIR / "evaluation_history.parquet"
+
+SPLIT_FILES = {
+    "TRAIN": DATA_DIR / "train.parquet",
+    "VALIDATION": DATA_DIR / "validation.parquet",
+    "TEST": DATA_DIR / "test.parquet",
+}
+
+EXPECTED_EVAL_ROWS = 43_027
+EXPECTED_SPLIT_ROWS = {
+    "TRAIN": 30_118,
+    "VALIDATION": 6_454,
+    "TEST": 6_455,
+}
+
+EVAL_EVENT_REQUIRED = [
+    "evaluation_id",
+    "user_id",
+    "video_id",
+    "time_ms",
+    "long_view",
+]
+
+HISTORY_REQUIRED = [
+    "eval_idx",
+    "user_id",
+    "video_id",
+    "time_ms",
+    "history_len_full",
+    "history_1",
+    "history_1_len",
+    "history_5",
+    "history_5_len",
+    "history_10",
+    "history_10_len",
+    "history_20",
+    "history_20_len",
+    "history_50",
+    "history_50_len",
+    "history_100",
+    "history_100_len",
+    "history_full",
+    "history_full_len",
+]
+
+WINDOWS = [1, 5, 10, 20, 50, 100]
+
+
+def check(condition, message):
+    if condition:
+        print(f"[PASS] {message}")
+    else:
+        print(f"[FAIL] {message}")
+        raise AssertionError(message)
+
+
+def check_file(path):
+    check(path.exists(), f"File exists: {path}")
+
+
+def check_columns(df, required, name):
+    missing = [c for c in required if c not in df.columns]
+    check(
+        not missing,
+        f"{name} contains required columns"
+        + (f" | missing: {missing}" if missing else ""),
+    )
+
+
+def check_no_columns(df, forbidden, name):
+    present = [c for c in forbidden if c in df.columns]
+    check(
+        not present,
+        f"{name} does not contain forbidden columns"
+        + (f" | found: {present}" if present else ""),
+    )
+
+
+def audit_evaluation_events():
+    print("=" * 80)
+    print("1. EVALUATION EVENT ARTIFACT")
+    print("=" * 80)
+    
+    check_file(EVAL_EVENTS_FILE)
+    df = pd.read_parquet(EVAL_EVENTS_FILE)
+
+    print(f"  rows: {len(df):,}")
+    print(f"  columns: {len(df.columns)}")
+
+    check(
+        len(df) == EXPECTED_EVAL_ROWS,
+        f"evaluation_events rows = {EXPECTED_EVAL_ROWS:,}",
+    )
+
+    check_columns(
+        df,
+        EVAL_EVENT_REQUIRED,
+        "evaluation_events",
+    )
+
+    check(
+        "evaluation_id" in df.columns,
+        "evaluation_events uses evaluation_id",
+    )
+
+    check(
+        "eval_idx" not in df.columns,
+        "evaluation_events does NOT incorrectly require eval_idx",
+    )
+
+    check(
+        df["evaluation_id"].is_unique,
+        "evaluation_id is unique",
+    )
+
+    expected_ids = pd.RangeIndex(len(df))
+    actual_ids = pd.Index(df["evaluation_id"].astype("int64"))
+
+    check(
+        actual_ids.equals(expected_ids),
+        "evaluation_id covers 0..N-1",
+    )
+
+    unique_target = df["long_view"].dropna().unique()
+
+    check(
+        set(unique_target).issubset({0, 1}),
+        "long_view is binary",
+    )
+
+    check(
+        not df[["user_id", "video_id", "time_ms"]].duplicated().any(),
+        "evaluation event key (user_id, video_id, time_ms) is unique",
+    )
+
+    return df
+
+
+def audit_evaluation_history(eval_events):
+    print()
+    print("=" * 80)
+    print("2. EVALUATION HISTORY ARTIFACT")
+    print("=" * 80)
+    
+    check_file(EVAL_HISTORY_FILE)
+    history = pd.read_parquet(EVAL_HISTORY_FILE)
+
+    print(f"  rows: {len(history):,}")
+    print(f"  columns: {len(history.columns)}")
+
+    check(
+        len(history) == EXPECTED_EVAL_ROWS,
+        f"evaluation_history rows = {EXPECTED_EVAL_ROWS:,}",
+    )
+
+    check_columns(
+        history,
+        HISTORY_REQUIRED,
+        "evaluation_history",
+    )
+
+    check(
+        "eval_idx" in history.columns,
+        "evaluation_history uses eval_idx",
+    )
+
+    check(
+        "evaluation_id" not in history.columns,
+        "evaluation_history does NOT incorrectly require evaluation_id",
+    )
+
+    check(
+        history["eval_idx"].is_unique,
+        "eval_idx is unique in evaluation_history",
+    )
+
+    expected_idx = pd.RangeIndex(len(history))
+    actual_idx = pd.Index(history["eval_idx"].astype("int64"))
+
+    check(
+        actual_idx.equals(expected_idx),
+        "eval_idx covers 0..N-1",
+    )
+
+    event_ids = set(eval_events["evaluation_id"].astype("int64"))
+    history_ids = set(history["eval_idx"].astype("int64"))
+
+    check(
+        history_ids.issubset(event_ids),
+        "every history row maps to an evaluation event",
+    )
+
+    check(
+        event_ids.issubset(history_ids),
+        "every evaluation event has a corresponding history row",
+    )
+
+    event_key = (
+        eval_events[["evaluation_id", "user_id", "video_id", "time_ms"]]
+        .set_index("evaluation_id")
+        .sort_index()
+    )
+
+    history_key = (
+        history[["eval_idx", "user_id", "video_id", "time_ms"]]
+        .rename(columns={"eval_idx": "evaluation_id"})
+        .set_index("evaluation_id")
+        .sort_index()
+    )
+
+    check(
+        not history[["user_id", "video_id", "time_ms"]].duplicated().any(),
+        "history event key (user_id, video_id, time_ms) is unique",
+    )
+
+    check(
+        event_key.index.equals(history_key.index),
+        "evaluation event and history ID domains match exactly",
+    )
+
+    check(
+        event_key[["user_id", "video_id", "time_ms"]].equals(
+            history_key[["user_id", "video_id", "time_ms"]]
+        ),
+        "evaluation event and history content keys match exactly",
+    )
+
+    # History artifact must not contain the target label.
+    check_no_columns(
+        history,
+        ["long_view"],
+        "evaluation_history",
+    )
+
+    for w in WINDOWS:
+        len_col = f"history_{w}_len"
+        history_col = f"history_{w}"
+
+        check(
+            (history[len_col] >= 0).all(),
+            f"{len_col} contains no negative values",
+        )
+
+        check(
+            (history[len_col] <= w).all(),
+            f"{len_col} never exceeds W={w}",
+        )
+
+        check(
+            history[history_col].apply(len).equals(history[len_col]),
+            f"{history_col} length matches {len_col}",
+        )
+
+    for w in WINDOWS:
+        check(
+            (history["history_full_len"] >= history[f"history_{w}_len"]).all(),
+            f"history_full_len >= history_{w}_len for every row",
+        )
+
+    check(
+        history["history_full"].apply(len).equals(history["history_full_len"]),
+        "history_full length matches history_full_len",
+    )
+
+    return history
+
+
+def audit_splits(eval_events, eval_history):
+    print()
+    print("=" * 80)
+    print("3. TRAIN / VALIDATION / TEST SPLITS")
+    print("=" * 80)
+    
+    all_split_indices = []
+
+    for split_name, path in SPLIT_FILES.items():
+        print()
+        print("-" * 80)
+        print(split_name)
+
+        check_file(path)
+        df = pd.read_parquet(path)
+
+        print(f"  rows: {len(df):,}")
+        print(f"  columns: {len(df.columns)}")
+
+        expected_rows = EXPECTED_SPLIT_ROWS[split_name]
+
+        check(
+            len(df) == expected_rows,
+            f"{split_name.lower()} rows = {expected_rows:,}",
+        )
+
+        # Split artifacts are derived from evaluation_history.
+        check_columns(
+            df,
+            HISTORY_REQUIRED,
+            f"{split_name.lower()}",
+        )
+
+        check(
+            "eval_idx" in df.columns,
+            f"{split_name.lower()} uses eval_idx",
+        )
+
+        # These are intentionally absent.
+        check_no_columns(
+            df,
+            ["evaluation_id", "long_view"],
+            f"{split_name.lower()}",
+        )
+
+        check(
+            df["eval_idx"].is_unique,
+            f"{split_name.lower()} eval_idx is unique",
+        )
+
+        split_idx = set(df["eval_idx"].astype("int64"))
+        history_idx = set(eval_history["eval_idx"].astype("int64"))
+
+        check(
+            split_idx.issubset(history_idx),
+            f"{split_name.lower()} eval_idx values exist in evaluation_history",
+        )
+
+        all_split_indices.append((split_name, split_idx))
+
+    # Splits must be mutually exclusive.
+    for i in range(len(all_split_indices)):
+        name_a, idx_a = all_split_indices[i]
+
+        for j in range(i + 1, len(all_split_indices)):
+            name_b, idx_b = all_split_indices[j]
+
+            check(
+                idx_a.isdisjoint(idx_b),
+                f"{name_a.lower()} and {name_b.lower()} are mutually exclusive",
+            )
+
+    train_idx = all_split_indices[0][1]
+    val_idx = all_split_indices[1][1]
+    test_idx = all_split_indices[2][1]
+
+    union = train_idx | val_idx | test_idx
+    all_eval_idx = set(eval_history["eval_idx"].astype("int64"))
+
+    check(
+        union == all_eval_idx,
+        "train + validation + test cover all evaluation_history rows exactly once",
+    )
+
+    # Verify that labels are recoverable through eval_idx -> evaluation_id.
+    event_by_id = eval_events.set_index("evaluation_id")
+
+    for split_name, split_idx in all_split_indices:
+        missing = [
+            idx for idx in split_idx if idx not in event_by_id.index
+        ]
+
+        check(
+            not missing,
+            f"{split_name.lower()} eval_idx values map to evaluation_events",
+        )
+
+        labels = event_by_id.loc[list(split_idx), "long_view"]
+
+        check(
+            labels.notna().all(),
+            f"{split_name.lower()} labels are available through evaluation_events",
+        )
+
+
+def main():
+    print("=" * 80)
+    print("PHASE 8 — SCHEMA & SPLIT MAPPING AUDIT")
+    print("=" * 80)
+    
+    eval_events = audit_evaluation_events()
+    eval_history = audit_evaluation_history(eval_events)
+    audit_splits(eval_events, eval_history)
+
+    print()
+    print("=" * 80)
+    print("PHASE 8 SCHEMA AUDIT: PASS")
+    print("=" * 80)
+
+
+if __name__ == "__main__":
+    main()
+
+====================================================================================================
+FILE: src/data/build_split.py
+====================================================================================================
+from pathlib import Path
+
+import pandas as pd
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+INPUT_PATH = ROOT / "data" / "processed" / "evaluation_history.parquet"
+OUTPUT_DIR = ROOT / "data" / "processed"
+
+TRAIN_RATIO = 0.70
+VAL_RATIO = 0.15
+
+
+def main():
+    print("=" * 80)
+    print("BUILD TEMPORAL TRAIN / VALIDATION / TEST SPLIT")
+    print("=" * 80)
+
+    print(f"\nLoading:")
+    print(f"  {INPUT_PATH}")
+
+    if not INPUT_PATH.exists():
+        raise FileNotFoundError(INPUT_PATH)
+
+    df = pd.read_parquet(INPUT_PATH)
+
+    # Strict chronological ordering.
+    df = df.sort_values("time_ms").reset_index(drop=True)
+
+    n = len(df)
+
+    train_end = int(n * TRAIN_RATIO)
+    val_end = int(n * (TRAIN_RATIO + VAL_RATIO))
+
+    train = df.iloc[:train_end].copy()
+    val = df.iloc[train_end:val_end].copy()
+    test = df.iloc[val_end:].copy()
+
+    splits = {
+        "train": train,
+        "validation": val,
+        "test": test,
+    }
+
+    print("\nSplit sizes:")
+
+    for name, split in splits.items():
+        print(
+            f"  {name:<10}: "
+            f"{len(split):>7,} events | "
+            f"{split['time_ms'].min()} → "
+            f"{split['time_ms'].max()}"
+        )
+
+    # Validate temporal boundaries before writing.
+    assert train["time_ms"].max() < val["time_ms"].min()
+    assert val["time_ms"].max() < test["time_ms"].min()
+
+    # Validate no events were lost.
+    assert len(train) + len(val) + len(test) == len(df)
+
+    # Validate eval_idx uniqueness.
+    assert train["eval_idx"].is_unique
+    assert val["eval_idx"].is_unique
+    assert test["eval_idx"].is_unique
+
+    # Validate split disjointness by evaluation event.
+    train_idx = set(train["eval_idx"])
+    val_idx = set(val["eval_idx"])
+    test_idx = set(test["eval_idx"])
+
+    assert not (train_idx & val_idx)
+    assert not (train_idx & test_idx)
+    assert not (val_idx & test_idx)
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    paths = {
+        "train": OUTPUT_DIR / "train.parquet",
+        "validation": OUTPUT_DIR / "validation.parquet",
+        "test": OUTPUT_DIR / "test.parquet",
+    }
+
+    for name, split in splits.items():
+        split.to_parquet(paths[name], index=False)
+        print(f"\nSaved {name}:")
+        print(f"  {paths[name]}")
+
+    print("\n" + "=" * 80)
+    print("SPLIT VALIDATION")
+    print("=" * 80)
+
+    print("Temporal ordering: PASS")
+    print("Event coverage:    PASS")
+    print("eval_idx unique:   PASS")
+    print("Split disjointness: PASS")
+
+    print("\n" + "=" * 80)
+    print("DONE")
+    print("=" * 80)
+
+
+if __name__ == "__main__":
+    main()
+
+====================================================================================================
+FILE: src/data/audit_split.py
+====================================================================================================
+from pathlib import Path
+
+import pandas as pd
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+HISTORY_PATH = ROOT / "data" / "processed" / "evaluation_history.parquet"
+
+TRAIN_RATIO = 0.70
+VAL_RATIO = 0.15
+TEST_RATIO = 0.15
+
+RANDOM_STATE = 42
+
+
+def build_user_split(df):
+    users = df["user_id"].drop_duplicates().sample(
+        frac=1.0,
+        random_state=RANDOM_STATE,
+    )
+
+    n = len(users)
+
+    n_train = int(n * TRAIN_RATIO)
+    n_val = int(n * VAL_RATIO)
+
+    train_users = set(users.iloc[:n_train])
+    val_users = set(users.iloc[n_train:n_train + n_val])
+    test_users = set(users.iloc[n_train + n_val:])
+
+    return train_users, val_users, test_users
+
+
+def audit_split(df, train_users, val_users, test_users):
+    print("\n" + "=" * 80)
+    print("USER-LEVEL SPLIT AUDIT")
+    print("=" * 80)
+
+    sets = {
+        "train": train_users,
+        "validation": val_users,
+        "test": test_users,
+    }
+
+    print("Users:")
+    for name, users in sets.items():
+        print(f"  {name:<10}: {len(users):,}")
+
+    print("\nUser overlap:")
+
+    failed = False
+
+    names = list(sets.keys())
+
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a = names[i]
+            b = names[j]
+
+            overlap = sets[a] & sets[b]
+
+            print(f"  {a} ∩ {b}: {len(overlap):,}")
+
+            if overlap:
+                failed = True
+
+    print("\nEvaluation events:")
+
+    for name, users in sets.items():
+        subset = df[df["user_id"].isin(users)]
+
+        print(
+            f"  {name:<10}: "
+            f"{len(subset):>7,} events "
+            f"({len(subset) / len(df):.2%})"
+        )
+
+    if failed:
+        print("\nUser-disjoint split: FAIL")
+    else:
+        print("\nUser-disjoint split: PASS")
+
+
+def audit_event_distribution(df, train_users, val_users, test_users):
+    print("\n" + "=" * 80)
+    print("SPLIT DISTRIBUTION AUDIT")
+    print("=" * 80)
+
+    splits = {
+        "train": train_users,
+        "validation": val_users,
+        "test": test_users,
+    }
+
+    for name, users in splits.items():
+        subset = df[df["user_id"].isin(users)]
+
+        click_rate = subset["is_click"].mean() \
+            if "is_click" in subset.columns else None
+
+        print(f"\n{name}:")
+        print(f"  users:  {subset['user_id'].nunique():,}")
+        print(f"  events: {len(subset):,}")
+
+        if click_rate is not None:
+            print(f"  click rate: {click_rate:.2%}")
+
+
+def audit_user_history_leakage(df, train_users, val_users, test_users):
+    print("\n" + "=" * 80)
+    print("USER HISTORY LEAKAGE AUDIT")
+    print("=" * 80)
+
+    all_users = set(df["user_id"])
+
+    assigned = train_users | val_users | test_users
+
+    missing = all_users - assigned
+    extra = assigned - all_users
+
+    print(f"Users missing from split: {len(missing):,}")
+    print(f"Unknown users in split:   {len(extra):,}")
+
+    if not missing and not extra:
+        print("User assignment coverage: PASS")
+    else:
+        print("User assignment coverage: FAIL")
+
+
+def main():
+    print("=" * 80)
+    print("AUDIT TRAIN / VALIDATION / TEST SPLIT")
+    print("=" * 80)
+
+    print(f"\nLoading:")
+    print(f"  {HISTORY_PATH}")
+
+    if not HISTORY_PATH.exists():
+        raise FileNotFoundError(HISTORY_PATH)
+
+    df = pd.read_parquet(HISTORY_PATH)
+
+    print(f"\nEvaluation events: {len(df):,}")
+    print(f"Unique users:      {df['user_id'].nunique():,}")
+
+    train_users, val_users, test_users = build_user_split(df)
+
+    audit_split(
+        df,
+        train_users,
+        val_users,
+        test_users,
+    )
+
+    audit_user_history_leakage(
+        df,
+        train_users,
+        val_users,
+        test_users,
+    )
+
+    print("\n" + "=" * 80)
+    print("AUDIT COMPLETE")
+    print("=" * 80)
+
+
+if __name__ == "__main__":
+    main()
+
+====================================================================================================
+FILE: src/data/audit_temporal_split.py
+====================================================================================================
+from pathlib import Path
+
+import pandas as pd
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+HISTORY_PATH = ROOT / "data" / "processed" / "evaluation_history.parquet"
+
+TRAIN_RATIO = 0.70
+VAL_RATIO = 0.15
+TEST_RATIO = 0.15
+
+
+def audit_global_time_order(df):
+    print("\n" + "=" * 80)
+    print("GLOBAL TEMPORAL ORDER")
+    print("=" * 80)
+
+    df = df.sort_values("time_ms").reset_index(drop=True)
+
+    n = len(df)
+
+    train_end = int(n * TRAIN_RATIO)
+    val_end = int(n * (TRAIN_RATIO + VAL_RATIO))
+
+    train = df.iloc[:train_end]
+    val = df.iloc[train_end:val_end]
+    test = df.iloc[val_end:]
+
+    print("Events:")
+    print(f"  train:      {len(train):,}")
+    print(f"  validation: {len(val):,}")
+    print(f"  test:       {len(test):,}")
+
+    print("\nTime ranges:")
+
+    for name, split in [
+        ("train", train),
+        ("validation", val),
+        ("test", test),
+    ]:
+        print(
+            f"  {name:<10} "
+            f"{split['time_ms'].min()} "
+            f"→ {split['time_ms'].max()}"
+        )
+
+    train_val_ok = train["time_ms"].max() < val["time_ms"].min()
+    val_test_ok = val["time_ms"].max() < test["time_ms"].min()
+
+    print("\nTemporal ordering:")
+
+    print(
+        f"  train < validation: "
+        f"{'PASS' if train_val_ok else 'FAIL'}"
+    )
+
+    print(
+        f"  validation < test:  "
+        f"{'PASS' if val_test_ok else 'FAIL'}"
+    )
+
+
+def audit_user_temporal_order(df):
+    print("\n" + "=" * 80)
+    print("PER-USER TEMPORAL ORDER")
+    print("=" * 80)
+
+    ordered = df.sort_values(
+        ["user_id", "time_ms"]
+    )
+
+    violations = (
+        ordered
+        .groupby("user_id")["time_ms"]
+        .diff()
+        .lt(0)
+        .sum()
+    )
+
+    print(f"Per-user time violations: {violations:,}")
+
+    if violations == 0:
+        print("Per-user temporal order: PASS")
+    else:
+        print("Per-user temporal order: FAIL")
+
+
+def audit_history_before_evaluation(df):
+    print("\n" + "=" * 80)
+    print("HISTORY BEFORE EVALUATION")
+    print("=" * 80)
+
+    # history.py already validated temporal construction.
+    # Here we verify that every evaluation event has a valid
+    # non-negative history length.
+
+    violations = 0
+
+    for w in [1, 5, 10, 20, 50, 100]:
+        col = f"history_{w}_len"
+
+        violations += (
+            (df[col] < 0) |
+            (df[col] > w)
+        ).sum()
+
+    print(f"History window violations: {violations:,}")
+
+    if violations == 0:
+        print("History bounds: PASS")
+    else:
+        print("History bounds: FAIL")
+
+
+def audit_user_presence_across_temporal_splits(df):
+    print("\n" + "=" * 80)
+    print("USER PRESENCE ACROSS TEMPORAL SPLITS")
+    print("=" * 80)
+
+    df = df.sort_values("time_ms")
+
+    n = len(df)
+
+    train_end = int(n * TRAIN_RATIO)
+    val_end = int(n * (TRAIN_RATIO + VAL_RATIO))
+
+    train = df.iloc[:train_end]
+    val = df.iloc[train_end:val_end]
+    test = df.iloc[val_end:]
+
+    train_users = set(train["user_id"])
+    val_users = set(val["user_id"])
+    test_users = set(test["user_id"])
+
+    print(f"Train users:      {len(train_users):,}")
+    print(f"Validation users: {len(val_users):,}")
+    print(f"Test users:       {len(test_users):,}")
+
+    print("\nOverlaps:")
+
+    print(f"  train ∩ validation: {len(train_users & val_users):,}")
+    print(f"  train ∩ test:       {len(train_users & test_users):,}")
+    print(f"  validation ∩ test:  {len(val_users & test_users):,}")
+
+
+def main():
+    print("=" * 80)
+    print("AUDIT TEMPORAL TRAIN / VALIDATION / TEST SPLIT")
+    print("=" * 80)
+
+    print(f"\nLoading:")
+    print(f"  {HISTORY_PATH}")
+
+    if not HISTORY_PATH.exists():
+        raise FileNotFoundError(HISTORY_PATH)
+
+    df = pd.read_parquet(HISTORY_PATH)
+
+    print(f"\nEvaluation events: {len(df):,}")
+
+    audit_global_time_order(df)
+    audit_user_temporal_order(df)
+    audit_history_before_evaluation(df)
+    audit_user_presence_across_temporal_splits(df)
+
+    print("\n" + "=" * 80)
+    print("AUDIT COMPLETE")
+    print("=" * 80)
+
+
+if __name__ == "__main__":
+    main()
+
+
+####################################################################################################
+# 2. PARQUET SCHEMAS + SAMPLE DATA
+####################################################################################################
+
+====================================================================================================
+DATASET: data/processed/evaluation_events.parquet
+====================================================================================================
+SHAPE: (43027, 23)
+
+COLUMNS / DTYPES:
+  evaluation_id                            int64
+  user_id                                  int64
+  video_id                                 int64
+  date                                     int64
+  hourmin                                  int64
+  time_ms                                  int64
+  is_click                                 int64
+  is_like                                  int64
+  is_follow                                int64
+  is_comment                               int64
+  is_forward                               int64
+  is_hate                                  int64
+  long_view                                int64
+  play_time_ms                             int64
+  duration_ms                              int64
+  profile_stay_time                        int64
+  comment_stay_time                        int64
+  is_profile_enter                         int64
+  is_rand                                  int64
+  tab                                      int64
+  previous_same_video_time_ms              float64
+  has_previous_same_video                  bool
+  time_since_previous_same_video_ms        float64
+
+NULL COUNTS:
+evaluation_id                            0
+user_id                                  0
+video_id                                 0
+date                                     0
+hourmin                                  0
+time_ms                                  0
+is_click                                 0
+is_like                                  0
+is_follow                                0
+is_comment                               0
+is_forward                               0
+is_hate                                  0
+long_view                                0
+play_time_ms                             0
+duration_ms                              0
+profile_stay_time                        0
+comment_stay_time                        0
+is_profile_enter                         0
+is_rand                                  0
+tab                                      0
+previous_same_video_time_ms          42999
+has_previous_same_video                  0
+time_since_previous_same_video_ms    42999
+
+FIRST 3 ROWS:
+   evaluation_id  user_id  video_id      date  hourmin        time_ms  is_click  is_like  is_follow  is_comment  is_forward  is_hate  long_view  play_time_ms  duration_ms  profile_stay_time  comment_stay_time  is_profile_enter  is_rand  tab  previous_same_video_time_ms  has_previous_same_video  time_since_previous_same_video_ms
+0              0      427      3447  20220422     1200  1650600645720         0        0          0           0           0        0          0          4610        72966                  0                  0                 0        1    1                          NaN                    False                                NaN
+1              1      427      2947  20220422     1200  1650601224607         0        0          0           0           0        0          0           989       115233                  0                  0                 0        1    1                          NaN                    False                                NaN
+2              2      269      2857  20220422     1200  1650601757617         0        0          0           0           0        0          0          1782        11766                  0                  0                 0        1    1                          NaN                    False                                NaN
+
+LAST 3 ROWS:
+       evaluation_id  user_id  video_id      date  hourmin        time_ms  is_click  is_like  is_follow  is_comment  is_forward  is_hate  long_view  play_time_ms  duration_ms  profile_stay_time  comment_stay_time  is_profile_enter  is_rand  tab  previous_same_video_time_ms  has_previous_same_video  time_since_previous_same_video_ms
+43024          43024      972      2845  20220508     2300  1652025059832         0        0          0           0           0        0          0          1963       337000                  0                  0                 0        1    1                          NaN                    False                                NaN
+43025          43025      972      4328  20220508     2300  1652025097003         0        0          0           0           0        0          0          3697       178333                  0                  0                 0        1    1                          NaN                    False                                NaN
+43026          43026      881      4486  20220508     2300  1652025123404         0        0          0           0           0        0          0          1729        73133                  0                  0                 0        1    1                          NaN                    False                                NaN
+
+COLUMN: evaluation_id
+  dtype: int64
+  nunique: 43027
+  min: 0
+  max: 43026
+  first values:
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+COLUMN: user_id
+  dtype: int64
+  nunique: 1000
+  min: 0
+  max: 999
+  first values:
+[427, 427, 269, 269, 343, 152, 876, 59, 59, 990]
+
+COLUMN: video_id
+  dtype: int64
+  nunique: 7388
+  min: 0
+  max: 7387
+  first values:
+[3447, 2947, 2857, 1666, 277, 522, 1502, 1466, 1878, 1453]
+
+COLUMN: time_ms
+  dtype: int64
+  nunique: 43027
+  min: 1650600645720
+  max: 1652025123404
+  first values:
+[1650600645720, 1650601224607, 1650601757617, 1650602412391, 1650605519925, 1650606615005, 1650608373346, 1650609133350, 1650609327640, 1650609407144]
+
+COLUMN: long_view
+  dtype: int64
+  nunique: 2
+  min: 0
+  max: 1
+  first values:
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+
+====================================================================================================
+DATASET: data/processed/evaluation_history.parquet
+====================================================================================================
+SHAPE: (43027, 19)
+
+COLUMNS / DTYPES:
+  eval_idx                                 int64
+  user_id                                  int64
+  video_id                                 int64
+  time_ms                                  int64
+  history_len_full                         int64
+  history_1                                object
+  history_1_len                            int64
+  history_5                                object
+  history_5_len                            int64
+  history_10                               object
+  history_10_len                           int64
+  history_20                               object
+  history_20_len                           int64
+  history_50                               object
+  history_50_len                           int64
+  history_100                              object
+  history_100_len                          int64
+  history_full                             object
+  history_full_len                         int64
+
+NULL COUNTS:
+eval_idx            0
+user_id             0
+video_id            0
+time_ms             0
+history_len_full    0
+history_1           0
+history_1_len       0
+history_5           0
+history_5_len       0
+history_10          0
+history_10_len      0
+history_20          0
+history_20_len      0
+history_50          0
+history_50_len      0
+history_100         0
+history_100_len     0
+history_full        0
+history_full_len    0
+
+FIRST 3 ROWS:
+   eval_idx  user_id  video_id        time_ms  history_len_full  history_1  history_1_len                                      history_5  history_5_len                                                                                  history_10  history_10_len                                                                                                                                                                           history_20  history_20_len                                                                                                                                                                                                                                                                                                                                                                                                                                                     history_50  history_50_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         history_100  history_100_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 history_full  history_full_len
+0     20328      427      3447  1650600645720             11686  [4305982]              1  [2213878, 3362923, 3452837, 3547229, 4305982]              5  [2607933, 2616777, 2720017, 3607032, 1706117, 2213878, 3362923, 3452837, 3547229, 4305982]              10  [1946009, 2846437, 2858768, 3150826, 714050, 1513444, 2025583, 2518016, 1783118, 2195165, 2607933, 2616777, 2720017, 3607032, 1706117, 2213878, 3362923, 3452837, 3547229, 4305982]              20  [1688402, 2180390, 2283205, 2764319, 3598994, 3985339, 4131567, 1032309, 1367313, 1472978, 2978293, 3464174, 1549272, 1640323, 1719911, 2141772, 2141772, 3064566, 3180093, 3312517, 4236851, 382427, 391407, 2720242, 2784470, 4100953, 4102273, 226830, 623888, 1861530, 1946009, 2846437, 2858768, 3150826, 714050, 1513444, 2025583, 2518016, 1783118, 2195165, 2607933, 2616777, 2720017, 3607032, 1706117, 2213878, 3362923, 3452837, 3547229, 4305982]              50   [2249399, 3466901, 3620101, 71534, 1895862, 2909227, 3162011, 3405513, 3613784, 740668, 2388748, 2796142, 2796142, 3466224, 3595529, 3617911, 3812675, 90496, 1097517, 1130736, 2963941, 3459555, 3740286, 103614, 170916, 170916, 391093, 1830041, 2143879, 3336622, 3525927, 52749, 409381, 1435763, 2090068, 3597468, 3833757, 646324, 803370, 1368502, 1563476, 2057937, 2459520, 2779182, 4039748, 1096576, 1265101, 1470846, 1904624, 2895634, 1688402, 2180390, 2283205, 2764319, 3598994, 3985339, 4131567, 1032309, 1367313, 1472978, 2978293, 3464174, 1549272, 1640323, 1719911, 2141772, 2141772, 3064566, 3180093, 3312517, 4236851, 382427, 391407, 2720242, 2784470, 4100953, 4102273, 226830, 623888, 1861530, 1946009, 2846437, 2858768, 3150826, 714050, 1513444, 2025583, 2518016, 1783118, 2195165, 2607933, 2616777, 2720017, 3607032, 1706117, 2213878, 3362923, 3452837, 3547229, 4305982]              100                      [1191692, 2510079, 3523039, 3995866, 794239, 1010693, 1278259, 1527035, 1877637, 3932401, 131623, 1080465, 1178507, 1967899, 2553238, 3321396, 1082434, 1622325, 2527691, 3219586, 4115958, 1531484, 2450003, 4276347, 148104, 350210, 702491, 745166, 780981, 2058780, 482684, 709911, 2017648, 3041930, 3238849, 3781647, 815612, 2048531, 2464247, 2589148, 3834527, 4244987, 45942, 673651, 867741, 1031608, 1590531, 3052440, 443688, 653476, 653476, 1009881, 1562042, 1709451, 1751731, 3269400, 207135, 814626, 1114944, 2404832, 3431182, 3907906, 56810, 875296, 1914458, 2340681, 2872372, 3300253, 136666, 893391, 1439508, 2950094, 2977964, 3374358, 536904, 927262, 1619284, 2700196, 2715894, 2838836, 265265, 477584, 1453324, 1635279, 3395969, 4280844, 905247, 915808, 1807730, 4150791, 615156, 754603, 1540646, 2395777, 2981007, 710944, 879116, 1226466, 1817228, 3741927, ...]             11686
+1     20329      427      2947  1650601224607             11722  [4109535]              1  [1741451, 2700504, 2945452, 3079924, 4109535]              5   [574883, 1450281, 1524258, 2540450, 1557955, 1741451, 2700504, 2945452, 3079924, 4109535]              10       [3830516, 4325554, 871737, 1758998, 2348680, 3416761, 4143337, 4359990, 37145, 97711, 574883, 1450281, 1524258, 2540450, 1557955, 1741451, 2700504, 2945452, 3079924, 4109535]              20         [2025583, 2518016, 1783118, 2195165, 2607933, 2616777, 2720017, 3607032, 1706117, 2213878, 3362923, 3452837, 3547229, 4305982, 295599, 561162, 566225, 596112, 3467351, 621448, 1868291, 2271762, 2339018, 2538742, 2800834, 3215235, 932175, 1005161, 1795250, 3094312, 3830516, 4325554, 871737, 1758998, 2348680, 3416761, 4143337, 4359990, 37145, 97711, 574883, 1450281, 1524258, 2540450, 1557955, 1741451, 2700504, 2945452, 3079924, 4109535]              50   [3833757, 646324, 803370, 1368502, 1563476, 2057937, 2459520, 2779182, 4039748, 1096576, 1265101, 1470846, 1904624, 2895634, 1688402, 2180390, 2283205, 2764319, 3598994, 3985339, 4131567, 1032309, 1367313, 1472978, 2978293, 3464174, 1549272, 1640323, 1719911, 2141772, 2141772, 3064566, 3180093, 3312517, 4236851, 382427, 391407, 2720242, 2784470, 4100953, 4102273, 226830, 623888, 1861530, 1946009, 2846437, 2858768, 3150826, 714050, 1513444, 2025583, 2518016, 1783118, 2195165, 2607933, 2616777, 2720017, 3607032, 1706117, 2213878, 3362923, 3452837, 3547229, 4305982, 295599, 561162, 566225, 596112, 3467351, 621448, 1868291, 2271762, 2339018, 2538742, 2800834, 3215235, 932175, 1005161, 1795250, 3094312, 3830516, 4325554, 871737, 1758998, 2348680, 3416761, 4143337, 4359990, 37145, 97711, 574883, 1450281, 1524258, 2540450, 1557955, 1741451, 2700504, 2945452, 3079924, 4109535]              100                      [1191692, 2510079, 3523039, 3995866, 794239, 1010693, 1278259, 1527035, 1877637, 3932401, 131623, 1080465, 1178507, 1967899, 2553238, 3321396, 1082434, 1622325, 2527691, 3219586, 4115958, 1531484, 2450003, 4276347, 148104, 350210, 702491, 745166, 780981, 2058780, 482684, 709911, 2017648, 3041930, 3238849, 3781647, 815612, 2048531, 2464247, 2589148, 3834527, 4244987, 45942, 673651, 867741, 1031608, 1590531, 3052440, 443688, 653476, 653476, 1009881, 1562042, 1709451, 1751731, 3269400, 207135, 814626, 1114944, 2404832, 3431182, 3907906, 56810, 875296, 1914458, 2340681, 2872372, 3300253, 136666, 893391, 1439508, 2950094, 2977964, 3374358, 536904, 927262, 1619284, 2700196, 2715894, 2838836, 265265, 477584, 1453324, 1635279, 3395969, 4280844, 905247, 915808, 1807730, 4150791, 615156, 754603, 1540646, 2395777, 2981007, 710944, 879116, 1226466, 1817228, 3741927, ...]             11722
+2     12185      269      2857  1650601757617             11817  [2436713]              1  [3027562, 3368653, 1358105, 2322419, 2436713]              5   [4243735, 886908, 1183244, 2215355, 2280749, 3027562, 3368653, 1358105, 2322419, 2436713]              10   [2755025, 2937955, 2982818, 3889455, 4196360, 895664, 1839504, 1962156, 2029319, 3290330, 4243735, 886908, 1183244, 2215355, 2280749, 3027562, 3368653, 1358105, 2322419, 2436713]              20       [380493, 617214, 1457396, 1718700, 2543579, 2543579, 2982814, 353147, 869917, 1908613, 2019858, 4002816, 320559, 446982, 1794054, 2142149, 2142149, 2791968, 2813738, 3293337, 3504299, 471554, 779227, 1192136, 2297191, 2761127, 3513172, 2039085, 2204945, 2204945, 2755025, 2937955, 2982818, 3889455, 4196360, 895664, 1839504, 1962156, 2029319, 3290330, 4243735, 886908, 1183244, 2215355, 2280749, 3027562, 3368653, 1358105, 2322419, 2436713]              50  [255815, 404361, 1562967, 1976199, 2665495, 2682071, 4126829, 729984, 874022, 1627576, 1728454, 1918249, 2929105, 1267821, 2868600, 3319633, 3463333, 3617247, 4240529, 370863, 609773, 1132471, 1690775, 1775178, 1775178, 3782701, 4080653, 594387, 1125179, 1295666, 1369853, 2699473, 2746651, 3558078, 982229, 1240265, 1970662, 1971945, 3022189, 4111796, 2177484, 3464258, 1177588, 1711504, 2171710, 2504616, 4077047, 2236040, 2403159, 2411752, 380493, 617214, 1457396, 1718700, 2543579, 2543579, 2982814, 353147, 869917, 1908613, 2019858, 4002816, 320559, 446982, 1794054, 2142149, 2142149, 2791968, 2813738, 3293337, 3504299, 471554, 779227, 1192136, 2297191, 2761127, 3513172, 2039085, 2204945, 2204945, 2755025, 2937955, 2982818, 3889455, 4196360, 895664, 1839504, 1962156, 2029319, 3290330, 4243735, 886908, 1183244, 2215355, 2280749, 3027562, 3368653, 1358105, 2322419, 2436713]              100  [2026218, 2070802, 3310608, 769109, 2539495, 2694383, 2865492, 3265474, 4009787, 783394, 2563639, 3199380, 3201683, 3260284, 3790355, 1449759, 2367521, 2657179, 2814602, 3530176, 3732047, 1314754, 1363964, 2137517, 2470910, 3790996, 3829202, 197400, 462195, 1597469, 2316047, 3906705, 3989523, 4156316, 770865, 2859037, 2874522, 2874522, 2885942, 2918639, 2961257, 4094674, 380625, 1339238, 1604734, 1635104, 2176586, 3613108, 248044, 326628, 339145, 2049656, 2050183, 2546139, 861625, 2026023, 2026023, 2241714, 3292930, 3762583, 3951339, 4339849, 847128, 1170224, 1478819, 2487147, 2801944, 3320171, 1618003, 2073205, 3242813, 3242813, 3250437, 3302404, 3767878, 3807613, 775518, 1202083, 1766991, 2970509, 3434931, 3859903, 188317, 3445997, 3445997, 4124135, 1316197, 1988151, 2379752, 2497743, 3836016, 3960530, 922422, 1430975, 2466925, 3172894, 3454562, 3522203, 3342237, 3388154, ...]             11817
+
+LAST 3 ROWS:
+       eval_idx  user_id  video_id        time_ms  history_len_full  history_1  history_1_len                                      history_5  history_5_len                                                                                 history_10  history_10_len                                                                                                                                                                        history_20  history_20_len                                                                                                                                                                                                                                                                                                                                                                                                                                                   history_50  history_50_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      history_100  history_100_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              history_full  history_full_len
+43024     42040      972      2845  1652025059832             30734  [3793726]              1  [1397268, 1717747, 2118647, 3205403, 3793726]              5   [660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726]              10   [3269137, 4165856, 904025, 1299684, 1431476, 1707397, 2609398, 3295986, 253027, 331661, 660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726]              20  [1607414, 2434937, 2713337, 3145116, 3147589, 4213019, 4234392, 2740295, 343655, 1012025, 1079936, 1111007, 1808240, 2041669, 2076267, 2491687, 2770035, 3451309, 3932106, 4150583, 2184390, 652394, 1160726, 2375349, 2426968, 2498972, 2734159, 2856099, 2948851, 3077192, 3269137, 4165856, 904025, 1299684, 1431476, 1707397, 2609398, 3295986, 253027, 331661, 660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726]              50    [129189, 487094, 850742, 1166948, 1188783, 1516571, 2926705, 3213254, 3547876, 3900748, 4023932, 4178890, 1445628, 389039, 535344, 1986363, 2396281, 3036741, 3480492, 2783249, 3909997, 2919275, 3992504, 1445628, 2188378, 3629655, 3740158, 3781507, 1395632, 1544509, 1648969, 2878421, 3777027, 8646, 128331, 602514, 1449751, 1501950, 2038769, 2336741, 2781625, 3134407, 3174823, 462574, 3685065, 224532, 257858, 343208, 563040, 774210, 1607414, 2434937, 2713337, 3145116, 3147589, 4213019, 4234392, 2740295, 343655, 1012025, 1079936, 1111007, 1808240, 2041669, 2076267, 2491687, 2770035, 3451309, 3932106, 4150583, 2184390, 652394, 1160726, 2375349, 2426968, 2498972, 2734159, 2856099, 2948851, 3077192, 3269137, 4165856, 904025, 1299684, 1431476, 1707397, 2609398, 3295986, 253027, 331661, 660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726]              100    [200273, 304101, 329243, 807112, 847730, 1785789, 2034082, 2732100, 3295719, 3404629, 3089763, 4092205, 193599, 3192188, 3223883, 3311319, 3659758, 4127670, 1028994, 2891643, 2974883, 3510792, 3686182, 3797023, 446524, 479266, 965844, 3605102, 4127725, 4235497, 1856705, 1953885, 2652988, 2695341, 3488332, 3821545, 72752, 283183, 292087, 385227, 511821, 4154255, 279059, 743128, 2161605, 3116568, 3494588, 3511205, 571782, 1169101, 1582440, 2274112, 2399872, 4007468, 326470, 1791840, 1979369, 2274912, 2391369, 4219148, 35891, 787082, 903129, 3194961, 4054903, 4246812, 114310, 1504490, 2161200, 2789913, 2825548, 3047677, 961833, 1199390, 1620832, 2028191, 3576499, 4348380, 699488, 1110363, 2737831, 3296808, 3334304, 3719537, 2712306, 528208, 3097466, 279154, 623837, 672773, 1577325, 4070170, 347896, 89239, 277542, 998679, 1214354, 1670768, 2124362, 2414006, ...]             30734
+43025     42041      972      4328  1652025097003             30740  [3184493]              1  [1071976, 1675446, 1853689, 2672728, 3184493]              5  [1717747, 2118647, 3205403, 3793726, 474277, 1071976, 1675446, 1853689, 2672728, 3184493]              10   [2609398, 3295986, 253027, 331661, 660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726, 474277, 1071976, 1675446, 1853689, 2672728, 3184493]              20   [4234392, 2740295, 343655, 1012025, 1079936, 1111007, 1808240, 2041669, 2076267, 2491687, 2770035, 3451309, 3932106, 4150583, 2184390, 652394, 1160726, 2375349, 2426968, 2498972, 2734159, 2856099, 2948851, 3077192, 3269137, 4165856, 904025, 1299684, 1431476, 1707397, 2609398, 3295986, 253027, 331661, 660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726, 474277, 1071976, 1675446, 1853689, 2672728, 3184493]              50  [2926705, 3213254, 3547876, 3900748, 4023932, 4178890, 1445628, 389039, 535344, 1986363, 2396281, 3036741, 3480492, 2783249, 3909997, 2919275, 3992504, 1445628, 2188378, 3629655, 3740158, 3781507, 1395632, 1544509, 1648969, 2878421, 3777027, 8646, 128331, 602514, 1449751, 1501950, 2038769, 2336741, 2781625, 3134407, 3174823, 462574, 3685065, 224532, 257858, 343208, 563040, 774210, 1607414, 2434937, 2713337, 3145116, 3147589, 4213019, 4234392, 2740295, 343655, 1012025, 1079936, 1111007, 1808240, 2041669, 2076267, 2491687, 2770035, 3451309, 3932106, 4150583, 2184390, 652394, 1160726, 2375349, 2426968, 2498972, 2734159, 2856099, 2948851, 3077192, 3269137, 4165856, 904025, 1299684, 1431476, 1707397, 2609398, 3295986, 253027, 331661, 660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726, 474277, 1071976, 1675446, 1853689, 2672728, 3184493]              100    [200273, 304101, 329243, 807112, 847730, 1785789, 2034082, 2732100, 3295719, 3404629, 3089763, 4092205, 193599, 3192188, 3223883, 3311319, 3659758, 4127670, 1028994, 2891643, 2974883, 3510792, 3686182, 3797023, 446524, 479266, 965844, 3605102, 4127725, 4235497, 1856705, 1953885, 2652988, 2695341, 3488332, 3821545, 72752, 283183, 292087, 385227, 511821, 4154255, 279059, 743128, 2161605, 3116568, 3494588, 3511205, 571782, 1169101, 1582440, 2274112, 2399872, 4007468, 326470, 1791840, 1979369, 2274912, 2391369, 4219148, 35891, 787082, 903129, 3194961, 4054903, 4246812, 114310, 1504490, 2161200, 2789913, 2825548, 3047677, 961833, 1199390, 1620832, 2028191, 3576499, 4348380, 699488, 1110363, 2737831, 3296808, 3334304, 3719537, 2712306, 528208, 3097466, 279154, 623837, 672773, 1577325, 4070170, 347896, 89239, 277542, 998679, 1214354, 1670768, 2124362, 2414006, ...]             30740
+43026     38732      881      4486  1652025123404              2708  [3527488]              1  [1626082, 2054338, 2249163, 3197529, 3527488]              5  [2326442, 2414129, 2860569, 3786420, 776091, 1626082, 2054338, 2249163, 3197529, 3527488]              10  [232356, 664388, 1150684, 1476053, 1639415, 3567269, 4060498, 4265137, 483519, 1891334, 2326442, 2414129, 2860569, 3786420, 776091, 1626082, 2054338, 2249163, 3197529, 3527488]              20     [848280, 1959150, 2478226, 2617996, 2831652, 3098044, 3530526, 3883106, 3977695, 4072609, 4081073, 789908, 1162709, 1189363, 2176851, 2901738, 3557011, 4073809, 4079995, 464235, 585179, 718316, 762718, 1358124, 1700853, 2806870, 2969711, 3469916, 3788693, 3979511, 232356, 664388, 1150684, 1476053, 1639415, 3567269, 4060498, 4265137, 483519, 1891334, 2326442, 2414129, 2860569, 3786420, 776091, 1626082, 2054338, 2249163, 3197529, 3527488]              50  [1291186, 1341470, 1623809, 1709937, 1775052, 3404584, 960757, 1197365, 1508220, 1586499, 1834077, 2134901, 2359458, 2463979, 2721200, 3696017, 208636, 338769, 693373, 1152069, 1188127, 2124720, 2578845, 2786489, 2804493, 3368626, 3840647, 562661, 644570, 769480, 809687, 990153, 1059235, 1117808, 2455657, 3364940, 4113173, 4133596, 4201025, 195097, 791868, 1479873, 1691263, 2315207, 2370760, 2594677, 3739540, 3892623, 3923182, 4137515, 848280, 1959150, 2478226, 2617996, 2831652, 3098044, 3530526, 3883106, 3977695, 4072609, 4081073, 789908, 1162709, 1189363, 2176851, 2901738, 3557011, 4073809, 4079995, 464235, 585179, 718316, 762718, 1358124, 1700853, 2806870, 2969711, 3469916, 3788693, 3979511, 232356, 664388, 1150684, 1476053, 1639415, 3567269, 4060498, 4265137, 483519, 1891334, 2326442, 2414129, 2860569, 3786420, 776091, 1626082, 2054338, 2249163, 3197529, 3527488]              100  [51233, 101187, 979121, 1369434, 2074292, 2537917, 929910, 2185186, 2523226, 2735198, 3325385, 4029552, 478103, 812907, 3227908, 82136, 603119, 1189805, 1427463, 1530718, 1731091, 20770, 818293, 2726257, 3207338, 3794018, 1110901, 2339023, 192517, 614218, 2388697, 2789327, 3536349, 31277, 449764, 614218, 753401, 3067294, 195280, 2064548, 2526802, 3516226, 3625826, 1425998, 1572593, 1751051, 3419255, 3841336, 1110851, 1811136, 3512118, 3536349, 3756630, 4012036, 414860, 2660910, 3737717, 3879063, 4204731, 170260, 4247964, 738198, 974187, 3278627, 3514190, 2057642, 2100300, 2127370, 3168328, 4048269, 431252, 1074813, 1910639, 2354578, 3015495, 3159126, 849626, 1355318, 2002691, 2766409, 3057226, 3648568, 237685, 316212, 2586872, 2878739, 3055555, 1594685, 456181, 2966049, 3451171, 643755, 1834022, 2349494, 3323098, 3468069, 4216946, 1250362, 3171882, 73944, ...]              2708
+
+COLUMN: eval_idx
+  dtype: int64
+  nunique: 43027
+  min: 0
+  max: 43026
+  first values:
+[20328, 20329, 12185, 12186, 15249, 7202, 38581, 2702, 2703, 42696]
+
+COLUMN: user_id
+  dtype: int64
+  nunique: 1000
+  min: 0
+  max: 999
+  first values:
+[427, 427, 269, 269, 343, 152, 876, 59, 59, 990]
+
+COLUMN: video_id
+  dtype: int64
+  nunique: 7388
+  min: 0
+  max: 7387
+  first values:
+[3447, 2947, 2857, 1666, 277, 522, 1502, 1466, 1878, 1453]
+
+COLUMN: time_ms
+  dtype: int64
+  nunique: 43027
+  min: 1650600645720
+  max: 1652025123404
+  first values:
+[1650600645720, 1650601224607, 1650601757617, 1650602412391, 1650605519925, 1650606615005, 1650608373346, 1650609133350, 1650609327640, 1650609407144]
+
+====================================================================================================
+DATASET: data/processed/train.parquet
+====================================================================================================
+SHAPE: (30118, 19)
+
+COLUMNS / DTYPES:
+  eval_idx                                 int64
+  user_id                                  int64
+  video_id                                 int64
+  time_ms                                  int64
+  history_len_full                         int64
+  history_1                                object
+  history_1_len                            int64
+  history_5                                object
+  history_5_len                            int64
+  history_10                               object
+  history_10_len                           int64
+  history_20                               object
+  history_20_len                           int64
+  history_50                               object
+  history_50_len                           int64
+  history_100                              object
+  history_100_len                          int64
+  history_full                             object
+  history_full_len                         int64
+
+NULL COUNTS:
+eval_idx            0
+user_id             0
+video_id            0
+time_ms             0
+history_len_full    0
+history_1           0
+history_1_len       0
+history_5           0
+history_5_len       0
+history_10          0
+history_10_len      0
+history_20          0
+history_20_len      0
+history_50          0
+history_50_len      0
+history_100         0
+history_100_len     0
+history_full        0
+history_full_len    0
+
+FIRST 3 ROWS:
+   eval_idx  user_id  video_id        time_ms  history_len_full  history_1  history_1_len                                      history_5  history_5_len                                                                                  history_10  history_10_len                                                                                                                                                                           history_20  history_20_len                                                                                                                                                                                                                                                                                                                                                                                                                                                     history_50  history_50_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         history_100  history_100_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 history_full  history_full_len
+0     20328      427      3447  1650600645720             11686  [4305982]              1  [2213878, 3362923, 3452837, 3547229, 4305982]              5  [2607933, 2616777, 2720017, 3607032, 1706117, 2213878, 3362923, 3452837, 3547229, 4305982]              10  [1946009, 2846437, 2858768, 3150826, 714050, 1513444, 2025583, 2518016, 1783118, 2195165, 2607933, 2616777, 2720017, 3607032, 1706117, 2213878, 3362923, 3452837, 3547229, 4305982]              20  [1688402, 2180390, 2283205, 2764319, 3598994, 3985339, 4131567, 1032309, 1367313, 1472978, 2978293, 3464174, 1549272, 1640323, 1719911, 2141772, 2141772, 3064566, 3180093, 3312517, 4236851, 382427, 391407, 2720242, 2784470, 4100953, 4102273, 226830, 623888, 1861530, 1946009, 2846437, 2858768, 3150826, 714050, 1513444, 2025583, 2518016, 1783118, 2195165, 2607933, 2616777, 2720017, 3607032, 1706117, 2213878, 3362923, 3452837, 3547229, 4305982]              50   [2249399, 3466901, 3620101, 71534, 1895862, 2909227, 3162011, 3405513, 3613784, 740668, 2388748, 2796142, 2796142, 3466224, 3595529, 3617911, 3812675, 90496, 1097517, 1130736, 2963941, 3459555, 3740286, 103614, 170916, 170916, 391093, 1830041, 2143879, 3336622, 3525927, 52749, 409381, 1435763, 2090068, 3597468, 3833757, 646324, 803370, 1368502, 1563476, 2057937, 2459520, 2779182, 4039748, 1096576, 1265101, 1470846, 1904624, 2895634, 1688402, 2180390, 2283205, 2764319, 3598994, 3985339, 4131567, 1032309, 1367313, 1472978, 2978293, 3464174, 1549272, 1640323, 1719911, 2141772, 2141772, 3064566, 3180093, 3312517, 4236851, 382427, 391407, 2720242, 2784470, 4100953, 4102273, 226830, 623888, 1861530, 1946009, 2846437, 2858768, 3150826, 714050, 1513444, 2025583, 2518016, 1783118, 2195165, 2607933, 2616777, 2720017, 3607032, 1706117, 2213878, 3362923, 3452837, 3547229, 4305982]              100                      [1191692, 2510079, 3523039, 3995866, 794239, 1010693, 1278259, 1527035, 1877637, 3932401, 131623, 1080465, 1178507, 1967899, 2553238, 3321396, 1082434, 1622325, 2527691, 3219586, 4115958, 1531484, 2450003, 4276347, 148104, 350210, 702491, 745166, 780981, 2058780, 482684, 709911, 2017648, 3041930, 3238849, 3781647, 815612, 2048531, 2464247, 2589148, 3834527, 4244987, 45942, 673651, 867741, 1031608, 1590531, 3052440, 443688, 653476, 653476, 1009881, 1562042, 1709451, 1751731, 3269400, 207135, 814626, 1114944, 2404832, 3431182, 3907906, 56810, 875296, 1914458, 2340681, 2872372, 3300253, 136666, 893391, 1439508, 2950094, 2977964, 3374358, 536904, 927262, 1619284, 2700196, 2715894, 2838836, 265265, 477584, 1453324, 1635279, 3395969, 4280844, 905247, 915808, 1807730, 4150791, 615156, 754603, 1540646, 2395777, 2981007, 710944, 879116, 1226466, 1817228, 3741927, ...]             11686
+1     20329      427      2947  1650601224607             11722  [4109535]              1  [1741451, 2700504, 2945452, 3079924, 4109535]              5   [574883, 1450281, 1524258, 2540450, 1557955, 1741451, 2700504, 2945452, 3079924, 4109535]              10       [3830516, 4325554, 871737, 1758998, 2348680, 3416761, 4143337, 4359990, 37145, 97711, 574883, 1450281, 1524258, 2540450, 1557955, 1741451, 2700504, 2945452, 3079924, 4109535]              20         [2025583, 2518016, 1783118, 2195165, 2607933, 2616777, 2720017, 3607032, 1706117, 2213878, 3362923, 3452837, 3547229, 4305982, 295599, 561162, 566225, 596112, 3467351, 621448, 1868291, 2271762, 2339018, 2538742, 2800834, 3215235, 932175, 1005161, 1795250, 3094312, 3830516, 4325554, 871737, 1758998, 2348680, 3416761, 4143337, 4359990, 37145, 97711, 574883, 1450281, 1524258, 2540450, 1557955, 1741451, 2700504, 2945452, 3079924, 4109535]              50   [3833757, 646324, 803370, 1368502, 1563476, 2057937, 2459520, 2779182, 4039748, 1096576, 1265101, 1470846, 1904624, 2895634, 1688402, 2180390, 2283205, 2764319, 3598994, 3985339, 4131567, 1032309, 1367313, 1472978, 2978293, 3464174, 1549272, 1640323, 1719911, 2141772, 2141772, 3064566, 3180093, 3312517, 4236851, 382427, 391407, 2720242, 2784470, 4100953, 4102273, 226830, 623888, 1861530, 1946009, 2846437, 2858768, 3150826, 714050, 1513444, 2025583, 2518016, 1783118, 2195165, 2607933, 2616777, 2720017, 3607032, 1706117, 2213878, 3362923, 3452837, 3547229, 4305982, 295599, 561162, 566225, 596112, 3467351, 621448, 1868291, 2271762, 2339018, 2538742, 2800834, 3215235, 932175, 1005161, 1795250, 3094312, 3830516, 4325554, 871737, 1758998, 2348680, 3416761, 4143337, 4359990, 37145, 97711, 574883, 1450281, 1524258, 2540450, 1557955, 1741451, 2700504, 2945452, 3079924, 4109535]              100                      [1191692, 2510079, 3523039, 3995866, 794239, 1010693, 1278259, 1527035, 1877637, 3932401, 131623, 1080465, 1178507, 1967899, 2553238, 3321396, 1082434, 1622325, 2527691, 3219586, 4115958, 1531484, 2450003, 4276347, 148104, 350210, 702491, 745166, 780981, 2058780, 482684, 709911, 2017648, 3041930, 3238849, 3781647, 815612, 2048531, 2464247, 2589148, 3834527, 4244987, 45942, 673651, 867741, 1031608, 1590531, 3052440, 443688, 653476, 653476, 1009881, 1562042, 1709451, 1751731, 3269400, 207135, 814626, 1114944, 2404832, 3431182, 3907906, 56810, 875296, 1914458, 2340681, 2872372, 3300253, 136666, 893391, 1439508, 2950094, 2977964, 3374358, 536904, 927262, 1619284, 2700196, 2715894, 2838836, 265265, 477584, 1453324, 1635279, 3395969, 4280844, 905247, 915808, 1807730, 4150791, 615156, 754603, 1540646, 2395777, 2981007, 710944, 879116, 1226466, 1817228, 3741927, ...]             11722
+2     12185      269      2857  1650601757617             11817  [2436713]              1  [3027562, 3368653, 1358105, 2322419, 2436713]              5   [4243735, 886908, 1183244, 2215355, 2280749, 3027562, 3368653, 1358105, 2322419, 2436713]              10   [2755025, 2937955, 2982818, 3889455, 4196360, 895664, 1839504, 1962156, 2029319, 3290330, 4243735, 886908, 1183244, 2215355, 2280749, 3027562, 3368653, 1358105, 2322419, 2436713]              20       [380493, 617214, 1457396, 1718700, 2543579, 2543579, 2982814, 353147, 869917, 1908613, 2019858, 4002816, 320559, 446982, 1794054, 2142149, 2142149, 2791968, 2813738, 3293337, 3504299, 471554, 779227, 1192136, 2297191, 2761127, 3513172, 2039085, 2204945, 2204945, 2755025, 2937955, 2982818, 3889455, 4196360, 895664, 1839504, 1962156, 2029319, 3290330, 4243735, 886908, 1183244, 2215355, 2280749, 3027562, 3368653, 1358105, 2322419, 2436713]              50  [255815, 404361, 1562967, 1976199, 2665495, 2682071, 4126829, 729984, 874022, 1627576, 1728454, 1918249, 2929105, 1267821, 2868600, 3319633, 3463333, 3617247, 4240529, 370863, 609773, 1132471, 1690775, 1775178, 1775178, 3782701, 4080653, 594387, 1125179, 1295666, 1369853, 2699473, 2746651, 3558078, 982229, 1240265, 1970662, 1971945, 3022189, 4111796, 2177484, 3464258, 1177588, 1711504, 2171710, 2504616, 4077047, 2236040, 2403159, 2411752, 380493, 617214, 1457396, 1718700, 2543579, 2543579, 2982814, 353147, 869917, 1908613, 2019858, 4002816, 320559, 446982, 1794054, 2142149, 2142149, 2791968, 2813738, 3293337, 3504299, 471554, 779227, 1192136, 2297191, 2761127, 3513172, 2039085, 2204945, 2204945, 2755025, 2937955, 2982818, 3889455, 4196360, 895664, 1839504, 1962156, 2029319, 3290330, 4243735, 886908, 1183244, 2215355, 2280749, 3027562, 3368653, 1358105, 2322419, 2436713]              100  [2026218, 2070802, 3310608, 769109, 2539495, 2694383, 2865492, 3265474, 4009787, 783394, 2563639, 3199380, 3201683, 3260284, 3790355, 1449759, 2367521, 2657179, 2814602, 3530176, 3732047, 1314754, 1363964, 2137517, 2470910, 3790996, 3829202, 197400, 462195, 1597469, 2316047, 3906705, 3989523, 4156316, 770865, 2859037, 2874522, 2874522, 2885942, 2918639, 2961257, 4094674, 380625, 1339238, 1604734, 1635104, 2176586, 3613108, 248044, 326628, 339145, 2049656, 2050183, 2546139, 861625, 2026023, 2026023, 2241714, 3292930, 3762583, 3951339, 4339849, 847128, 1170224, 1478819, 2487147, 2801944, 3320171, 1618003, 2073205, 3242813, 3242813, 3250437, 3302404, 3767878, 3807613, 775518, 1202083, 1766991, 2970509, 3434931, 3859903, 188317, 3445997, 3445997, 4124135, 1316197, 1988151, 2379752, 2497743, 3836016, 3960530, 922422, 1430975, 2466925, 3172894, 3454562, 3522203, 3342237, 3388154, ...]             11817
+
+LAST 3 ROWS:
+       eval_idx  user_id  video_id        time_ms  history_len_full  history_1  history_1_len                                      history_5  history_5_len                                                                                 history_10  history_10_len                                                                                                                                                                          history_20  history_20_len                                                                                                                                                                                                                                                                                                                                                                                                                                                 history_50  history_50_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      history_100  history_100_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         history_full  history_full_len
+30115       845       18      4399  1651756692069              5392  [3933857]              1  [1992355, 2915274, 2921934, 3392739, 3933857]              5  [482880, 3603093, 4050143, 4220005, 1391444, 1992355, 2915274, 2921934, 3392739, 3933857]              10     [1907749, 2702182, 301321, 381843, 1427473, 2363685, 2523498, 2680558, 423623, 469151, 482880, 3603093, 4050143, 4220005, 1391444, 1992355, 2915274, 2921934, 3392739, 3933857]              20      [1219796, 1525554, 2370870, 3149804, 3157004, 129016, 575055, 613818, 1438310, 2040521, 2740574, 6921, 251619, 946718, 1048393, 2664826, 1520015, 3240146, 3310441, 3456870, 3897137, 3989937, 1274122, 1474025, 1749635, 1749635, 2606722, 2679325, 3502668, 4052399, 1907749, 2702182, 301321, 381843, 1427473, 2363685, 2523498, 2680558, 423623, 469151, 482880, 3603093, 4050143, 4220005, 1391444, 1992355, 2915274, 2921934, 3392739, 3933857]              50  [434694, 541829, 735606, 1859643, 2064817, 3513351, 1357559, 2028783, 2453117, 3079438, 3679782, 3911842, 619857, 779931, 1617088, 3623154, 4250938, 4264110, 2478283, 2586016, 2834843, 3629509, 3882608, 3959756, 869783, 2497893, 2809553, 3270434, 3737101, 1015874, 1015874, 2241026, 2930361, 3864733, 3973284, 4290413, 4370565, 1506282, 1867588, 2703000, 3642380, 3809276, 4191064, 1467464, 3729949, 782438, 792344, 2382426, 4057217, 4096023, 1219796, 1525554, 2370870, 3149804, 3157004, 129016, 575055, 613818, 1438310, 2040521, 2740574, 6921, 251619, 946718, 1048393, 2664826, 1520015, 3240146, 3310441, 3456870, 3897137, 3989937, 1274122, 1474025, 1749635, 1749635, 2606722, 2679325, 3502668, 4052399, 1907749, 2702182, 301321, 381843, 1427473, 2363685, 2523498, 2680558, 423623, 469151, 482880, 3603093, 4050143, 4220005, 1391444, 1992355, 2915274, 2921934, 3392739, 3933857]              100  [266851, 403842, 1267424, 1770404, 1893156, 1946001, 400074, 1139268, 1307695, 1565310, 3135272, 3305053, 573032, 580928, 645228, 1672029, 1881799, 2324517, 552283, 651814, 771177, 959205, 3048482, 4258327, 612111, 1135927, 1425552, 2390678, 3065050, 3372163, 4276920, 502025, 1835685, 2086447, 2607614, 3324483, 3937326, 1531132, 1712774, 1749259, 2030000, 2244689, 4071584, 939569, 1979637, 2814382, 3476031, 3705116, 4077314, 1078296, 1205013, 2077403, 2217222, 3300408, 3699386, 212587, 1551489, 3251767, 3871603, 4316131, 127168, 1254710, 1741676, 2147923, 2369897, 2523252, 2523252, 3269223, 4352959, 1081292, 2097755, 2310376, 2507983, 3168612, 3855827, 351878, 367949, 1077787, 2040668, 3071025, 3180845, 246804, 324365, 324365, 2239765, 3346976, 3565484, 4143662, 4189637, 1670447, 1722176, 1867720, 1875981, 1930446, 2575786, 204480, 234512, 2045026, 2246864, 3997437, ...]              5392
+30116      3518       74      7332  1651756709933              5926  [3275714]              1  [2927961, 3112361, 3227500, 3275714, 3275714]              5  [3714412, 4091357, 859200, 1661120, 1806167, 2927961, 3112361, 3227500, 3275714, 3275714]              10       [589272, 1372886, 2331026, 68452, 664124, 2737556, 2872966, 3057135, 279218, 483365, 3714412, 4091357, 859200, 1661120, 1806167, 2927961, 3112361, 3227500, 3275714, 3275714]              20   [1520917, 1742935, 2393140, 3141470, 3607349, 3668760, 2483082, 3273918, 3306437, 3628440, 3648585, 4338023, 528503, 700454, 1387046, 3136975, 3311780, 3789633, 589272, 1907059, 2813438, 3425081, 3724627, 4299769, 1152750, 1860583, 2796629, 3154460, 3422358, 4203713, 589272, 1372886, 2331026, 68452, 664124, 2737556, 2872966, 3057135, 279218, 483365, 3714412, 4091357, 859200, 1661120, 1806167, 2927961, 3112361, 3227500, 3275714, 3275714]              50     [3795405, 4174841, 4294998, 108302, 254085, 470301, 850714, 4133388, 947401, 1810165, 2198363, 2198363, 563108, 2337019, 3694452, 757317, 858286, 1302064, 1889666, 2416946, 2461788, 2518603, 2934133, 3036422, 4283112, 4333496, 480808, 1594609, 2274503, 2546686, 93449, 393567, 1333115, 1781800, 3451116, 3624667, 4342427, 605638, 1640359, 1760070, 2460472, 2814614, 3126319, 1043823, 1904267, 1917341, 2144216, 3183253, 3236525, 300252, 1520917, 1742935, 2393140, 3141470, 3607349, 3668760, 2483082, 3273918, 3306437, 3628440, 3648585, 4338023, 528503, 700454, 1387046, 3136975, 3311780, 3789633, 589272, 1907059, 2813438, 3425081, 3724627, 4299769, 1152750, 1860583, 2796629, 3154460, 3422358, 4203713, 589272, 1372886, 2331026, 68452, 664124, 2737556, 2872966, 3057135, 279218, 483365, 3714412, 4091357, 859200, 1661120, 1806167, 2927961, 3112361, 3227500, 3275714, 3275714]              100               [580896, 1185897, 1633354, 2237100, 2707499, 3215137, 1008136, 1924750, 2129642, 2470697, 2817101, 2923105, 396251, 457809, 640929, 1110447, 3080204, 3586292, 215488, 294084, 436013, 635873, 639477, 639477, 895107, 2808939, 3201446, 513939, 877083, 1298677, 542875, 610090, 727920, 2164275, 2706186, 3199265, 3199651, 2159276, 1494662, 1600998, 2073205, 2418489, 2418489, 2710598, 2829656, 2965512, 301638, 1838869, 1864078, 2910415, 3199651, 3578210, 803003, 935404, 1266865, 2463562, 2735638, 3090791, 436963, 1010940, 2348560, 2437518, 2537997, 3780788, 340961, 881669, 1077134, 1180308, 2915682, 2915682, 4230601, 20544, 142645, 980495, 1343381, 1486790, 2377049, 2244167, 2470092, 3218086, 24940, 812110, 1933793, 3066344, 3242781, 3499600, 573872, 840602, 2444582, 3237856, 3241478, 580283, 649488, 768875, 2280866, 3792707, 177483, 1660749, 1930643, 2214093, ...]              5926
+30117     37205      838        82  1651756712186              7911  [2369314]              1  [1309396, 2644685, 3883752, 1442074, 2369314]              5   [2238903, 3784425, 3972426, 238559, 875986, 1309396, 2644685, 3883752, 1442074, 2369314]              10  [1042206, 1214241, 1281031, 1645556, 2005466, 2296425, 4315825, 4336789, 1602810, 1935827, 2238903, 3784425, 3972426, 238559, 875986, 1309396, 2644685, 3883752, 1442074, 2369314]              20  [1891419, 2454300, 3071718, 323357, 639909, 843652, 1902637, 2574805, 3226884, 2532697, 3899283, 4020131, 4236299, 1403137, 1452365, 1641117, 2323896, 3500228, 1282112, 757317, 1143995, 1850043, 1963614, 4015358, 255137, 1141326, 1995566, 2230793, 3993437, 78573, 1042206, 1214241, 1281031, 1645556, 2005466, 2296425, 4315825, 4336789, 1602810, 1935827, 2238903, 3784425, 3972426, 238559, 875986, 1309396, 2644685, 3883752, 1442074, 2369314]              50    [2510338, 4347016, 54307, 174302, 951082, 2780390, 3110952, 3500238, 1677545, 2715222, 1363238, 2260105, 2584952, 3107374, 3239227, 3566846, 525605, 1274122, 2185325, 2879813, 3186886, 3424071, 880087, 2741912, 2981958, 3102891, 3725529, 3815964, 469064, 765916, 3305712, 3337156, 4153462, 24007, 1299133, 2257597, 2454542, 2551870, 2716276, 764308, 898354, 1119388, 2178016, 4316314, 442434, 2423393, 2640836, 2846197, 4009947, 792345, 1891419, 2454300, 3071718, 323357, 639909, 843652, 1902637, 2574805, 3226884, 2532697, 3899283, 4020131, 4236299, 1403137, 1452365, 1641117, 2323896, 3500228, 1282112, 757317, 1143995, 1850043, 1963614, 4015358, 255137, 1141326, 1995566, 2230793, 3993437, 78573, 1042206, 1214241, 1281031, 1645556, 2005466, 2296425, 4315825, 4336789, 1602810, 1935827, 2238903, 3784425, 3972426, 238559, 875986, 1309396, 2644685, 3883752, 1442074, 2369314]              100     [39744, 1308734, 2257027, 2505882, 2667809, 3949816, 4127241, 744936, 1152731, 2390212, 2578009, 4252786, 421924, 753307, 2181723, 463207, 2136089, 3144624, 3185035, 592605, 845488, 884588, 1407618, 2507564, 2811895, 878998, 993709, 1496237, 1607437, 3825551, 4167694, 1747448, 2388100, 3041146, 4254566, 1824458, 1841970, 1991405, 2173965, 2187494, 3472511, 250240, 2592273, 1145299, 1315339, 1343707, 2317426, 3483087, 591850, 1646694, 416807, 463253, 968327, 3121505, 3481507, 3847852, 377978, 3557956, 3998828, 4352101, 122604, 2344766, 2495742, 3381637, 3624221, 138137, 840648, 1863694, 3084189, 3893083, 4004199, 1103186, 2898881, 3634578, 2833777, 632375, 1100312, 1267489, 1792964, 3331248, 3337148, 244630, 1627226, 1627463, 2589839, 2986461, 4201796, 405109, 962265, 1641871, 2761615, 3344486, 3646074, 3105142, 3761735, 3823267, 163261, 1017452, 1454027, 1852388, ...]              7911
+
+COLUMN: eval_idx
+  dtype: int64
+  nunique: 30118
+  min: 0
+  max: 43008
+  first values:
+[20328, 20329, 12185, 12186, 15249, 7202, 38581, 2702, 2703, 42696]
+
+COLUMN: user_id
+  dtype: int64
+  nunique: 977
+  min: 0
+  max: 999
+  first values:
+[427, 427, 269, 269, 343, 152, 876, 59, 59, 990]
+
+COLUMN: video_id
+  dtype: int64
+  nunique: 7298
+  min: 0
+  max: 7387
+  first values:
+[3447, 2947, 2857, 1666, 277, 522, 1502, 1466, 1878, 1453]
+
+COLUMN: time_ms
+  dtype: int64
+  nunique: 30118
+  min: 1650600645720
+  max: 1651756712186
+  first values:
+[1650600645720, 1650601224607, 1650601757617, 1650602412391, 1650605519925, 1650606615005, 1650608373346, 1650609133350, 1650609327640, 1650609407144]
+
+====================================================================================================
+DATASET: data/processed/validation.parquet
+====================================================================================================
+SHAPE: (6454, 19)
+
+COLUMNS / DTYPES:
+  eval_idx                                 int64
+  user_id                                  int64
+  video_id                                 int64
+  time_ms                                  int64
+  history_len_full                         int64
+  history_1                                object
+  history_1_len                            int64
+  history_5                                object
+  history_5_len                            int64
+  history_10                               object
+  history_10_len                           int64
+  history_20                               object
+  history_20_len                           int64
+  history_50                               object
+  history_50_len                           int64
+  history_100                              object
+  history_100_len                          int64
+  history_full                             object
+  history_full_len                         int64
+
+NULL COUNTS:
+eval_idx            0
+user_id             0
+video_id            0
+time_ms             0
+history_len_full    0
+history_1           0
+history_1_len       0
+history_5           0
+history_5_len       0
+history_10          0
+history_10_len      0
+history_20          0
+history_20_len      0
+history_50          0
+history_50_len      0
+history_100         0
+history_100_len     0
+history_full        0
+history_full_len    0
+
+FIRST 3 ROWS:
+   eval_idx  user_id  video_id        time_ms  history_len_full  history_1  history_1_len                                      history_5  history_5_len                                                                                history_10  history_10_len                                                                                                                                                                         history_20  history_20_len                                                                                                                                                                                                                                                                                                                                                                                                                                                 history_50  history_50_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      history_100  history_100_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              history_full  history_full_len
+0     32013      705       136  1651756718363              1231  [1858278]              1   [3960927, 4319146, 802190, 1476799, 1858278]              5  [2424364, 3734832, 425580, 1628750, 3368439, 3960927, 4319146, 802190, 1476799, 1858278]              10      [3224882, 4264076, 164041, 2662636, 3198797, 595528, 844114, 921746, 954491, 1807576, 2424364, 3734832, 425580, 1628750, 3368439, 3960927, 4319146, 802190, 1476799, 1858278]              20    [3728338, 498720, 3980940, 3993461, 4020181, 4246641, 1992939, 1906142, 2034963, 2405053, 2725064, 3155735, 3956720, 4131923, 517440, 1207294, 2627073, 2716359, 3149157, 4301695, 105807, 206062, 2740586, 2755992, 3107683, 3512075, 2051800, 2405053, 2773419, 3154267, 3224882, 4264076, 164041, 2662636, 3198797, 595528, 844114, 921746, 954491, 1807576, 2424364, 3734832, 425580, 1628750, 3368439, 3960927, 4319146, 802190, 1476799, 1858278]              50       [3719257, 581356, 1179394, 1217195, 2657095, 3190294, 3368521, 3765880, 447288, 1812364, 31068, 308529, 1189300, 1470246, 1834589, 1925135, 2279232, 2886559, 2916773, 3897168, 2784354, 3819282, 39339, 583689, 1422960, 1475868, 2819367, 3910601, 375479, 1527124, 1531312, 3128269, 3815461, 4177865, 844226, 1324279, 1345786, 1886175, 4105635, 4175067, 8268, 1086355, 1449310, 3204440, 4086901, 288994, 403300, 2201828, 2684382, 3590568, 3728338, 498720, 3980940, 3993461, 4020181, 4246641, 1992939, 1906142, 2034963, 2405053, 2725064, 3155735, 3956720, 4131923, 517440, 1207294, 2627073, 2716359, 3149157, 4301695, 105807, 206062, 2740586, 2755992, 3107683, 3512075, 2051800, 2405053, 2773419, 3154267, 3224882, 4264076, 164041, 2662636, 3198797, 595528, 844114, 921746, 954491, 1807576, 2424364, 3734832, 425580, 1628750, 3368439, 3960927, 4319146, 802190, 1476799, 1858278]              100       [290784, 1331413, 2390962, 2768507, 4023583, 4093466, 46477, 589081, 1429323, 2539127, 2600087, 3216930, 928301, 2367492, 2778858, 3113971, 3170104, 3350278, 966806, 972727, 1850955, 2130281, 4092270, 568203, 1766662, 2236136, 2302478, 3264543, 3874884, 20642, 653847, 749901, 1649136, 2290358, 4323059, 395014, 1358400, 2302410, 2685543, 2726029, 3414283, 988634, 1255527, 2513887, 3153847, 3231390, 3445879, 1073889, 1194004, 1539040, 1999289, 3357686, 3560687, 255673, 1638901, 2409572, 2615572, 3603604, 4229043, 140691, 685881, 1726729, 3236113, 3738125, 122111, 556051, 1447368, 1727415, 3039635, 3224184, 207153, 1311882, 1425066, 2234042, 3138248, 3849127, 516337, 1200982, 2742554, 2877735, 3488713, 4069251, 960243, 1118431, 1655155, 2466093, 2504190, 4254754, 1274717, 1816309, 3522814, 4342818, 3291944, 1512320, 1544032, 1947723, 2604762, 3802938, 4370148, 1528276, ...]              1231
+1     38889      884      4745  1651756744791             12323  [4268034]              1  [3204864, 3323012, 3323012, 3972426, 4268034]              5  [3935074, 35026, 1549265, 1675014, 2470508, 3204864, 3323012, 3323012, 3972426, 4268034]              10  [1160722, 2095596, 2431424, 3510621, 3862830, 578409, 2070310, 2549849, 2980921, 3367435, 3935074, 35026, 1549265, 1675014, 2470508, 3204864, 3323012, 3323012, 3972426, 4268034]              20      [3440397, 4215169, 625307, 668000, 1257514, 1477968, 2126528, 3075728, 3946636, 174192, 1031393, 1279877, 1847533, 2420545, 3355029, 3568126, 3709597, 3709597, 1174, 471673, 594198, 1326239, 1673034, 4294364, 177403, 1684870, 1821579, 2743613, 4338494, 212931, 1160722, 2095596, 2431424, 3510621, 3862830, 578409, 2070310, 2549849, 2980921, 3367435, 3935074, 35026, 1549265, 1675014, 2470508, 3204864, 3323012, 3323012, 3972426, 4268034]              50   [1777407, 2175115, 2846197, 3533272, 4163719, 4163719, 2482047, 3366959, 3440038, 3827067, 4060756, 4354011, 448209, 1067767, 1218096, 1218096, 1427868, 2427163, 2429392, 2570386, 3242039, 3771929, 12290, 869629, 1207238, 2012181, 2141647, 2810590, 4142638, 1847241, 2461096, 2537966, 3086157, 3405254, 3815394, 4144644, 286865, 634086, 725937, 2118595, 2835307, 3127190, 4168973, 870704, 887383, 1363549, 1759850, 2172491, 2172491, 2562894, 3440397, 4215169, 625307, 668000, 1257514, 1477968, 2126528, 3075728, 3946636, 174192, 1031393, 1279877, 1847533, 2420545, 3355029, 3568126, 3709597, 3709597, 1174, 471673, 594198, 1326239, 1673034, 4294364, 177403, 1684870, 1821579, 2743613, 4338494, 212931, 1160722, 2095596, 2431424, 3510621, 3862830, 578409, 2070310, 2549849, 2980921, 3367435, 3935074, 35026, 1549265, 1675014, 2470508, 3204864, 3323012, 3323012, 3972426, 4268034]              100    [1032024, 1782477, 2659441, 3269219, 3667912, 4210865, 146402, 873577, 1804636, 1930446, 3577906, 4129033, 941705, 1417393, 1590848, 1926481, 3256805, 3475093, 1838869, 2770076, 2801944, 3769474, 4146966, 4148801, 42859, 1877661, 2670408, 3279999, 3396834, 1694391, 2511828, 1051064, 2406025, 2474948, 2502691, 2885097, 3199380, 4292140, 861009, 911828, 2067146, 2622024, 2891316, 2928129, 3202163, 1076636, 1694391, 2511828, 2883584, 3127501, 3654776, 1492742, 1806305, 2997829, 3199380, 3658790, 3271928, 583240, 1003890, 1678060, 2110555, 4106578, 1002877, 2188989, 2321983, 2823978, 2854064, 3325360, 4113539, 144982, 157926, 291786, 325068, 649488, 2196296, 803268, 1865702, 2610230, 2777669, 3078000, 4206579, 4269478, 283382, 1199605, 1407712, 1621698, 3578732, 3887776, 214860, 2547008, 4211041, 491972, 1658415, 2048579, 3192077, 3811263, 3980720, 4252145, 310997, 334715, ...]             12323
+2     11395      244      3547  1651756812147              9661  [4026168]              1  [1029250, 1253928, 1427219, 1880601, 4026168]              5  [3194386, 337665, 489773, 1664391, 3492521, 1029250, 1253928, 1427219, 1880601, 4026168]              10  [1864101, 2167820, 2855580, 3363214, 310596, 1437579, 2312097, 2564609, 2588422, 2979830, 3194386, 337665, 489773, 1664391, 3492521, 1029250, 1253928, 1427219, 1880601, 4026168]              20  [2613063, 2740574, 4115219, 590644, 1239092, 2027666, 3148427, 3222920, 117839, 398604, 1774386, 2004695, 2833181, 3939118, 2261409, 3965724, 1682226, 2118962, 3085423, 3580923, 1916039, 2064131, 325457, 676203, 759546, 2049481, 2056850, 2235396, 3377086, 1483996, 1864101, 2167820, 2855580, 3363214, 310596, 1437579, 2312097, 2564609, 2588422, 2979830, 3194386, 337665, 489773, 1664391, 3492521, 1029250, 1253928, 1427219, 1880601, 4026168]              50  [1574631, 2517705, 2990271, 3769061, 4231911, 4280765, 197402, 208736, 585755, 837080, 883189, 2321711, 2344729, 2692408, 2998614, 3676288, 384519, 1857978, 3105252, 4259843, 1331350, 1955920, 733128, 3432235, 841028, 1770878, 2421594, 3621839, 3847477, 983380, 1212279, 1989511, 2361552, 4190089, 631378, 1460440, 1550016, 3140627, 3750767, 4271636, 564828, 2189776, 2237097, 2869466, 3326085, 3712860, 4053344, 214588, 1273771, 1816292, 2613063, 2740574, 4115219, 590644, 1239092, 2027666, 3148427, 3222920, 117839, 398604, 1774386, 2004695, 2833181, 3939118, 2261409, 3965724, 1682226, 2118962, 3085423, 3580923, 1916039, 2064131, 325457, 676203, 759546, 2049481, 2056850, 2235396, 3377086, 1483996, 1864101, 2167820, 2855580, 3363214, 310596, 1437579, 2312097, 2564609, 2588422, 2979830, 3194386, 337665, 489773, 1664391, 3492521, 1029250, 1253928, 1427219, 1880601, 4026168]              100  [2726533, 2142826, 2420707, 2507740, 3088347, 4096470, 469856, 2403182, 2416810, 2852694, 3334684, 3831540, 3995661, 2726533, 3559399, 187648, 964420, 2549998, 3056475, 4246558, 4347044, 753738, 1053689, 1087442, 1549588, 1597210, 2684155, 3621385, 568855, 978692, 1182855, 2275400, 2684551, 4200322, 865926, 2258385, 3015894, 3997114, 4118702, 4302380, 1367456, 1312589, 2199606, 2310091, 3457759, 4009691, 812907, 2338723, 2686687, 462702, 1327467, 1392044, 1440818, 1588653, 1315713, 1327803, 1788232, 2010584, 2012656, 2323785, 335601, 859965, 1197457, 1594145, 3617135, 331012, 1517969, 2036285, 3979670, 111260, 336691, 1073987, 2544603, 2992083, 3531037, 3623101, 3880583, 4261908, 570774, 3601050, 4197890, 1313166, 3475645, 2254553, 956520, 1847151, 3791095, 1205123, 1583240, 1824807, 2690961, 3325385, 3397825, 3452567, 179230, 2539461, 3069816, 3293736, 3608694, 3918667, ...]              9661
+
+LAST 3 ROWS:
+      eval_idx  user_id  video_id        time_ms  history_len_full  history_1  history_1_len                                      history_5  history_5_len                                                                                 history_10  history_10_len                                                                                                                                                                         history_20  history_20_len                                                                                                                                                                                                                                                                                                                                                                                                                                                  history_50  history_50_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                history_100  history_100_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  history_full  history_full_len
+6451      3093       63      4809  1651900034609              1536  [4185992]              1  [1147999, 2381897, 2486519, 4165437, 4185992]              5  [3620606, 3656591, 3928427, 3928427, 369550, 1147999, 2381897, 2486519, 4165437, 4185992]              10    [26759, 288348, 365110, 2241857, 2983723, 3092016, 1369759, 1571095, 2598349, 2625008, 3620606, 3656591, 3928427, 3928427, 369550, 1147999, 2381897, 2486519, 4165437, 4185992]              20          [750557, 1208350, 3444059, 4014441, 887629, 1488534, 2750123, 4024506, 92375, 92375, 482962, 554044, 740443, 1818552, 2393174, 4149796, 349214, 939581, 1151838, 1411481, 2743740, 3272423, 1337694, 1583057, 1868417, 2145934, 2681267, 2681267, 3388847, 4301088, 26759, 288348, 365110, 2241857, 2983723, 3092016, 1369759, 1571095, 2598349, 2625008, 3620606, 3656591, 3928427, 3928427, 369550, 1147999, 2381897, 2486519, 4165437, 4185992]              50         [569293, 842249, 2361449, 3392913, 3725701, 3725701, 106263, 1182154, 1576734, 2750187, 3838847, 4169465, 1520584, 1563129, 1626369, 2185325, 2395867, 3566598, 1185902, 1411352, 2489388, 2705276, 2708698, 4283197, 31167, 256586, 907743, 2108646, 3536415, 1395, 429124, 1448018, 1708295, 2304573, 3655404, 123538, 852037, 1204505, 1746616, 3100454, 3921607, 434535, 908161, 908161, 974622, 1319891, 2178737, 3466089, 3832141, 275737, 750557, 1208350, 3444059, 4014441, 887629, 1488534, 2750123, 4024506, 92375, 92375, 482962, 554044, 740443, 1818552, 2393174, 4149796, 349214, 939581, 1151838, 1411481, 2743740, 3272423, 1337694, 1583057, 1868417, 2145934, 2681267, 2681267, 3388847, 4301088, 26759, 288348, 365110, 2241857, 2983723, 3092016, 1369759, 1571095, 2598349, 2625008, 3620606, 3656591, 3928427, 3928427, 369550, 1147999, 2381897, 2486519, 4165437, 4185992]              100  [477937, 731044, 739033, 759888, 1635485, 2950288, 834577, 2140169, 2632609, 3558916, 2194442, 2228405, 87472, 290760, 602770, 1507868, 2950857, 3584519, 3840697, 2177088, 2580391, 652643, 846932, 3288479, 3825141, 4037380, 4088657, 820298, 3214724, 3573033, 4117701, 746304, 1063941, 2233189, 2311387, 3760541, 4089867, 4283360, 60550, 112848, 1328060, 1915344, 3354090, 3917481, 267376, 661477, 890369, 1451906, 2986128, 4139923, 1582543, 2259889, 3290825, 3371593, 3630144, 2233189, 2546835, 4213501, 356595, 806342, 1858231, 1883204, 2799989, 3943025, 3439872, 1885217, 1940855, 2265775, 3191768, 3269529, 858064, 1840781, 3515821, 52713, 439582, 2331876, 2825248, 3459089, 3676160, 1186721, 2148715, 2784454, 3868712, 4030429, 4046548, 476353, 866307, 960208, 1807152, 2917153, 3582580, 4272741, 3860641, 3953766, 875657, 1711204, 3069450, 3645960, 3834463, 4011664, ...]              1536
+6452       898       20      5033  1651900078065              3749  [3890055]              1   [399369, 1857448, 2303337, 2730531, 3890055]              5   [2334579, 2693765, 3354265, 3777299, 259224, 399369, 1857448, 2303337, 2730531, 3890055]              10  [3066829, 3994969, 1336299, 1683183, 2415666, 3537655, 3724075, 4230924, 294721, 1322174, 2334579, 2693765, 3354265, 3777299, 259224, 399369, 1857448, 2303337, 2730531, 3890055]              20     [2394513, 3987868, 511797, 712874, 750439, 846692, 1427184, 4041794, 1030130, 1275882, 1409530, 3962528, 4091527, 358237, 1139069, 1680870, 1680870, 2075050, 3075365, 3228587, 3687911, 285686, 502906, 1516552, 2570479, 4149271, 289585, 1003840, 1093830, 2352121, 3066829, 3994969, 1336299, 1683183, 2415666, 3537655, 3724075, 4230924, 294721, 1322174, 2334579, 2693765, 3354265, 3777299, 259224, 399369, 1857448, 2303337, 2730531, 3890055]              50  [2706549, 3128826, 3161485, 3729118, 3764703, 308729, 1122380, 1799441, 3613596, 3833464, 3967803, 2373111, 2570688, 2570688, 2728295, 2778075, 3201158, 3838333, 673797, 1302263, 1731932, 2053430, 3195802, 4219879, 41501, 1129638, 1410850, 1956315, 3004479, 3373556, 3840966, 416669, 536301, 2825524, 138518, 445542, 492772, 669261, 2309948, 3995908, 4303219, 486699, 729690, 2317286, 3297608, 3925019, 79915, 205949, 776112, 1114480, 2394513, 3987868, 511797, 712874, 750439, 846692, 1427184, 4041794, 1030130, 1275882, 1409530, 3962528, 4091527, 358237, 1139069, 1680870, 1680870, 2075050, 3075365, 3228587, 3687911, 285686, 502906, 1516552, 2570479, 4149271, 289585, 1003840, 1093830, 2352121, 3066829, 3994969, 1336299, 1683183, 2415666, 3537655, 3724075, 4230924, 294721, 1322174, 2334579, 2693765, 3354265, 3777299, 259224, 399369, 1857448, 2303337, 2730531, 3890055]              100       [597948, 1998761, 2042788, 3298713, 3545171, 4050364, 889193, 1788232, 2166005, 2602314, 2906281, 3704617, 64533, 373386, 486713, 601450, 2667397, 3141505, 47406, 682352, 767851, 2191020, 4026921, 4244971, 918782, 1994745, 2163848, 2873779, 3045461, 4018018, 45913, 721471, 1798061, 2209763, 2776441, 3251906, 3539163, 9637, 354156, 436031, 1057733, 1156704, 3244207, 221070, 448761, 1090821, 2661312, 3185315, 3242105, 880078, 880078, 894181, 964420, 1579630, 1832754, 2858107, 3241310, 816523, 1075598, 1948850, 2725696, 3092183, 3608861, 1115683, 2132065, 2541107, 3558348, 909067, 1251200, 1818967, 3921672, 2267216, 3131106, 3185403, 3978101, 3978485, 4223660, 942468, 1036396, 1950122, 3477032, 101314, 722021, 1536305, 2008108, 3218789, 3694698, 246307, 894966, 1150906, 1854142, 2601176, 2789065, 3359297, 3360283, 913690, 1155506, 1216999, 1755595, 2894179, ...]              3749
+6453       899       20      5636  1651900133543              3754  [4205691]              1  [1101279, 2995758, 3398499, 4148802, 4205691]              5  [399369, 1857448, 2303337, 2730531, 3890055, 1101279, 2995758, 3398499, 4148802, 4205691]              10  [3537655, 3724075, 4230924, 294721, 1322174, 2334579, 2693765, 3354265, 3777299, 259224, 399369, 1857448, 2303337, 2730531, 3890055, 1101279, 2995758, 3398499, 4148802, 4205691]              20  [846692, 1427184, 4041794, 1030130, 1275882, 1409530, 3962528, 4091527, 358237, 1139069, 1680870, 1680870, 2075050, 3075365, 3228587, 3687911, 285686, 502906, 1516552, 2570479, 4149271, 289585, 1003840, 1093830, 2352121, 3066829, 3994969, 1336299, 1683183, 2415666, 3537655, 3724075, 4230924, 294721, 1322174, 2334579, 2693765, 3354265, 3777299, 259224, 399369, 1857448, 2303337, 2730531, 3890055, 1101279, 2995758, 3398499, 4148802, 4205691]              50  [308729, 1122380, 1799441, 3613596, 3833464, 3967803, 2373111, 2570688, 2570688, 2728295, 2778075, 3201158, 3838333, 673797, 1302263, 1731932, 2053430, 3195802, 4219879, 41501, 1129638, 1410850, 1956315, 3004479, 3373556, 3840966, 416669, 536301, 2825524, 138518, 445542, 492772, 669261, 2309948, 3995908, 4303219, 486699, 729690, 2317286, 3297608, 3925019, 79915, 205949, 776112, 1114480, 2394513, 3987868, 511797, 712874, 750439, 846692, 1427184, 4041794, 1030130, 1275882, 1409530, 3962528, 4091527, 358237, 1139069, 1680870, 1680870, 2075050, 3075365, 3228587, 3687911, 285686, 502906, 1516552, 2570479, 4149271, 289585, 1003840, 1093830, 2352121, 3066829, 3994969, 1336299, 1683183, 2415666, 3537655, 3724075, 4230924, 294721, 1322174, 2334579, 2693765, 3354265, 3777299, 259224, 399369, 1857448, 2303337, 2730531, 3890055, 1101279, 2995758, 3398499, 4148802, 4205691]              100       [597948, 1998761, 2042788, 3298713, 3545171, 4050364, 889193, 1788232, 2166005, 2602314, 2906281, 3704617, 64533, 373386, 486713, 601450, 2667397, 3141505, 47406, 682352, 767851, 2191020, 4026921, 4244971, 918782, 1994745, 2163848, 2873779, 3045461, 4018018, 45913, 721471, 1798061, 2209763, 2776441, 3251906, 3539163, 9637, 354156, 436031, 1057733, 1156704, 3244207, 221070, 448761, 1090821, 2661312, 3185315, 3242105, 880078, 880078, 894181, 964420, 1579630, 1832754, 2858107, 3241310, 816523, 1075598, 1948850, 2725696, 3092183, 3608861, 1115683, 2132065, 2541107, 3558348, 909067, 1251200, 1818967, 3921672, 2267216, 3131106, 3185403, 3978101, 3978485, 4223660, 942468, 1036396, 1950122, 3477032, 101314, 722021, 1536305, 2008108, 3218789, 3694698, 246307, 894966, 1150906, 1854142, 2601176, 2789065, 3359297, 3360283, 913690, 1155506, 1216999, 1755595, 2894179, ...]              3754
+
+COLUMN: eval_idx
+  dtype: int64
+  nunique: 6454
+  min: 7
+  max: 43017
+  first values:
+[32013, 38889, 11395, 20966, 15648, 38890, 42830, 35322, 17678, 6584]
+
+COLUMN: user_id
+  dtype: int64
+  nunique: 704
+  min: 0
+  max: 999
+  first values:
+[705, 884, 244, 440, 350, 884, 993, 790, 380, 146]
+
+COLUMN: video_id
+  dtype: int64
+  nunique: 4284
+  min: 0
+  max: 7387
+  first values:
+[136, 4745, 3547, 5885, 7162, 3965, 238, 2750, 6464, 3994]
+
+COLUMN: time_ms
+  dtype: int64
+  nunique: 6454
+  min: 1651756718363
+  max: 1651900133543
+  first values:
+[1651756718363, 1651756744791, 1651756812147, 1651756854718, 1651756869016, 1651756886814, 1651756892786, 1651756904085, 1651756931280, 1651756961066]
+
+====================================================================================================
+DATASET: data/processed/test.parquet
+====================================================================================================
+SHAPE: (6455, 19)
+
+COLUMNS / DTYPES:
+  eval_idx                                 int64
+  user_id                                  int64
+  video_id                                 int64
+  time_ms                                  int64
+  history_len_full                         int64
+  history_1                                object
+  history_1_len                            int64
+  history_5                                object
+  history_5_len                            int64
+  history_10                               object
+  history_10_len                           int64
+  history_20                               object
+  history_20_len                           int64
+  history_50                               object
+  history_50_len                           int64
+  history_100                              object
+  history_100_len                          int64
+  history_full                             object
+  history_full_len                         int64
+
+NULL COUNTS:
+eval_idx            0
+user_id             0
+video_id            0
+time_ms             0
+history_len_full    0
+history_1           0
+history_1_len       0
+history_5           0
+history_5_len       0
+history_10          0
+history_10_len      0
+history_20          0
+history_20_len      0
+history_50          0
+history_50_len      0
+history_100         0
+history_100_len     0
+history_full        0
+history_full_len    0
+
+FIRST 3 ROWS:
+   eval_idx  user_id  video_id        time_ms  history_len_full  history_1  history_1_len                                     history_5  history_5_len                                                                                history_10  history_10_len                                                                                                                                                                      history_20  history_20_len                                                                                                                                                                                                                                                                                                                                                                                                                                           history_50  history_50_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   history_100  history_100_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            history_full  history_full_len
+0      1538       34      2867  1651900140977              6308  [3523073]              1    [301879, 613404, 709641, 2691429, 3523073]              5    [316890, 1741003, 1971137, 2030787, 3840611, 301879, 613404, 709641, 2691429, 3523073]              10  [1296360, 1514414, 3777761, 2163394, 2253413, 3077418, 3781543, 3938832, 4309865, 50447, 316890, 1741003, 1971137, 2030787, 3840611, 301879, 613404, 709641, 2691429, 3523073]              20  [1527519, 2191319, 2721509, 3253339, 400504, 1926011, 2117244, 2683791, 3399796, 3749234, 101077, 632595, 1628483, 2573145, 2914954, 3959128, 254523, 2719709, 2847538, 3999139, 736403, 1304577, 1929063, 2666853, 3518571, 3906492, 4299241, 49072, 583547, 988766, 1296360, 1514414, 3777761, 2163394, 2253413, 3077418, 3781543, 3938832, 4309865, 50447, 316890, 1741003, 1971137, 2030787, 3840611, 301879, 613404, 709641, 2691429, 3523073]              50  [927467, 1744574, 1778582, 2153882, 2362130, 3365343, 3511845, 3893181, 4023234, 297094, 767364, 788603, 1209659, 2251178, 2701448, 2867359, 4037965, 2237795, 2636140, 3145639, 3319167, 3488185, 4362440, 2637395, 422191, 489068, 2257575, 2301510, 2448450, 3368540, 2194819, 2482990, 2841072, 3994015, 299387, 1107896, 2239808, 2408641, 3202238, 987935, 1307051, 1839377, 1908948, 2352699, 2599548, 2557327, 3025549, 277941, 1075418, 1500490, 1527519, 2191319, 2721509, 3253339, 400504, 1926011, 2117244, 2683791, 3399796, 3749234, 101077, 632595, 1628483, 2573145, 2914954, 3959128, 254523, 2719709, 2847538, 3999139, 736403, 1304577, 1929063, 2666853, 3518571, 3906492, 4299241, 49072, 583547, 988766, 1296360, 1514414, 3777761, 2163394, 2253413, 3077418, 3781543, 3938832, 4309865, 50447, 316890, 1741003, 1971137, 2030787, 3840611, 301879, 613404, 709641, 2691429, 3523073]              100       [516933, 698800, 1215759, 2737311, 3915728, 4296109, 4303729, 121094, 1645627, 1994063, 2983539, 3047808, 3101686, 217748, 2026240, 2474948, 3036037, 3040887, 3657320, 3789803, 921072, 2968524, 3302286, 4021940, 4025885, 4319075, 400696, 525563, 1710347, 1738822, 1752938, 1873325, 3083366, 80233, 537914, 729993, 729993, 1261330, 1415817, 2659431, 3789061, 688771, 2293363, 2677705, 2715433, 3339831, 4127241, 166812, 213847, 1121611, 3157199, 4099668, 468915, 2514439, 2636223, 2678774, 3591768, 3919208, 169581, 1244156, 2107184, 2188116, 3487401, 3857895, 797882, 2348240, 3590230, 3856324, 3972275, 4369848, 582760, 1096258, 1274886, 1965989, 2221893, 3068304, 376924, 1048325, 1387114, 2134077, 2580241, 3927289, 4141971, 77493, 1608273, 1771875, 1878212, 3314687, 4262444, 3572912, 3572912, 623554, 752433, 1276117, 2568066, 2985916, 3293698, 3293698, 3491992, 4345786, ...]              6308
+1     15186      339      6298  1651900150997              4106  [3135101]              1  [803652, 1356438, 1560828, 2849027, 3135101]              5  [1163227, 1408343, 1918438, 4019513, 600109, 803652, 1356438, 1560828, 2849027, 3135101]              10    [94473, 508665, 1531084, 1702912, 2347711, 3230387, 3754188, 269168, 412923, 554926, 1163227, 1408343, 1918438, 4019513, 600109, 803652, 1356438, 1560828, 2849027, 3135101]              20    [3548313, 3551455, 3777059, 4179247, 114844, 984983, 1705331, 1783747, 3251392, 4122754, 257976, 405822, 751795, 3253549, 3287212, 354090, 1426910, 1783473, 2130477, 2287562, 2398577, 3132143, 4114022, 850429, 896607, 912290, 1739766, 1893717, 2553163, 2610724, 94473, 508665, 1531084, 1702912, 2347711, 3230387, 3754188, 269168, 412923, 554926, 1163227, 1408343, 1918438, 4019513, 600109, 803652, 1356438, 1560828, 2849027, 3135101]              50              [609409, 1142839, 1927152, 2135797, 2154995, 2173045, 492828, 785274, 1171344, 3606303, 3824057, 3932215, 7150, 630001, 646611, 2240422, 67457, 1423876, 1778848, 2446950, 2945521, 355987, 778380, 908089, 1577564, 1973669, 3950726, 631270, 788814, 1097796, 1773012, 2973736, 4048311, 482083, 1691628, 2118962, 4006743, 4220404, 2437884, 3196581, 3740110, 86723, 851068, 1683807, 2348620, 2370702, 3890821, 4205691, 1699610, 3321170, 3548313, 3551455, 3777059, 4179247, 114844, 984983, 1705331, 1783747, 3251392, 4122754, 257976, 405822, 751795, 3253549, 3287212, 354090, 1426910, 1783473, 2130477, 2287562, 2398577, 3132143, 4114022, 850429, 896607, 912290, 1739766, 1893717, 2553163, 2610724, 94473, 508665, 1531084, 1702912, 2347711, 3230387, 3754188, 269168, 412923, 554926, 1163227, 1408343, 1918438, 4019513, 600109, 803652, 1356438, 1560828, 2849027, 3135101]              100     [500008, 1324226, 1340500, 1504392, 2361473, 2408096, 2455283, 2856211, 3411924, 3678394, 3834424, 598280, 808969, 1187745, 1526708, 1746641, 2030770, 2119234, 3002478, 3201229, 3976727, 3977091, 4104883, 436215, 1135558, 1471109, 1810620, 2223005, 2703505, 2707034, 2770299, 2894551, 3741798, 4164045, 2567217, 140539, 2684588, 610484, 1686121, 195045, 942878, 1172318, 1450111, 1651038, 1785621, 1847239, 2374053, 2567217, 2895431, 2898452, 3342060, 3744008, 177800, 418596, 829484, 1289392, 1366323, 1415439, 2151536, 2214958, 2596422, 3131197, 3273113, 405506, 1453498, 2588513, 3494620, 3495327, 4179543, 266241, 1794337, 2908288, 3306604, 401412, 2266321, 3967224, 4312471, 327273, 967429, 2164979, 3101122, 3263484, 4134938, 149930, 2069782, 2589342, 2693786, 2811895, 3163744, 2552628, 3761745, 538943, 2513488, 37194, 1504101, 1762661, 2443354, 4213253, 229695, 423748, ...]              4106
+2     18426      393      6453  1651900161858             10672   [486713]              1  [1752445, 2073114, 2656625, 2735413, 486713]              5    [2009125, 289737, 375699, 678848, 1472197, 1752445, 2073114, 2656625, 2735413, 486713]              10  [308257, 1399356, 1565707, 2320139, 2453672, 3849348, 1594324, 2742748, 3962127, 390464, 2009125, 289737, 375699, 678848, 1472197, 1752445, 2073114, 2656625, 2735413, 486713]              20        [2431436, 2671845, 3604574, 3925351, 4115012, 108791, 193549, 558146, 823847, 903495, 1493031, 2108356, 4351479, 82508, 595843, 839329, 845938, 845938, 1625162, 1642427, 2284776, 2840418, 4347658, 155891, 670994, 715273, 793141, 3204025, 3461795, 3937292, 308257, 1399356, 1565707, 2320139, 2453672, 3849348, 1594324, 2742748, 3962127, 390464, 2009125, 289737, 375699, 678848, 1472197, 1752445, 2073114, 2656625, 2735413, 486713]              50      [851575, 1189725, 2018854, 3261567, 245279, 1802766, 2101588, 3921286, 1176791, 1994757, 2312293, 3980417, 4147818, 658685, 1007169, 1269580, 2333699, 1472806, 2430153, 3980183, 3986642, 1003526, 2856175, 2904097, 379202, 2602314, 3780789, 4057256, 4118169, 257949, 1692083, 3256667, 3700196, 806052, 4247514, 691729, 1199257, 1451109, 2834430, 3035862, 3977701, 4161489, 1262535, 1503676, 1634357, 2600429, 2955837, 3912905, 2091408, 2214049, 2431436, 2671845, 3604574, 3925351, 4115012, 108791, 193549, 558146, 823847, 903495, 1493031, 2108356, 4351479, 82508, 595843, 839329, 845938, 845938, 1625162, 1642427, 2284776, 2840418, 4347658, 155891, 670994, 715273, 793141, 3204025, 3461795, 3937292, 308257, 1399356, 1565707, 2320139, 2453672, 3849348, 1594324, 2742748, 3962127, 390464, 2009125, 289737, 375699, 678848, 1472197, 1752445, 2073114, 2656625, 2735413, 486713]              100  [347644, 1317858, 1909371, 2310091, 3512782, 3997114, 46039, 246190, 2528309, 310574, 1701000, 1966611, 2715667, 4037072, 1101777, 1668320, 3532348, 68083, 2337413, 3260573, 4039188, 3601691, 4284371, 520313, 1675883, 1778391, 2203022, 2270114, 2359470, 1219461, 1266604, 1336626, 2025672, 2215263, 4037441, 697736, 2491950, 3016688, 3170519, 3718369, 3998369, 709596, 1678411, 1759236, 2235187, 2772755, 4197568, 251926, 957464, 2077403, 2399894, 2731917, 3207232, 798328, 2140771, 3229739, 3618610, 3840967, 4192839, 192517, 1280662, 2143902, 2316886, 3006788, 3617317, 1864968, 2448433, 3259270, 3348195, 3469248, 3764019, 905124, 2539242, 2577092, 3330998, 3584909, 3919985, 1964892, 2262685, 3388583, 506140, 544266, 1394282, 1500211, 2831536, 4066042, 1238771, 2924460, 3987916, 3967398, 976942, 990640, 1124375, 3792279, 4348983, 1080086, 2096555, 2724464, 3104514, 3871148, ...]             10672
+
+LAST 3 ROWS:
+      eval_idx  user_id  video_id        time_ms  history_len_full  history_1  history_1_len                                      history_5  history_5_len                                                                                 history_10  history_10_len                                                                                                                                                                        history_20  history_20_len                                                                                                                                                                                                                                                                                                                                                                                                                                                   history_50  history_50_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      history_100  history_100_len                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              history_full  history_full_len
+6452     42040      972      2845  1652025059832             30734  [3793726]              1  [1397268, 1717747, 2118647, 3205403, 3793726]              5   [660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726]              10   [3269137, 4165856, 904025, 1299684, 1431476, 1707397, 2609398, 3295986, 253027, 331661, 660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726]              20  [1607414, 2434937, 2713337, 3145116, 3147589, 4213019, 4234392, 2740295, 343655, 1012025, 1079936, 1111007, 1808240, 2041669, 2076267, 2491687, 2770035, 3451309, 3932106, 4150583, 2184390, 652394, 1160726, 2375349, 2426968, 2498972, 2734159, 2856099, 2948851, 3077192, 3269137, 4165856, 904025, 1299684, 1431476, 1707397, 2609398, 3295986, 253027, 331661, 660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726]              50    [129189, 487094, 850742, 1166948, 1188783, 1516571, 2926705, 3213254, 3547876, 3900748, 4023932, 4178890, 1445628, 389039, 535344, 1986363, 2396281, 3036741, 3480492, 2783249, 3909997, 2919275, 3992504, 1445628, 2188378, 3629655, 3740158, 3781507, 1395632, 1544509, 1648969, 2878421, 3777027, 8646, 128331, 602514, 1449751, 1501950, 2038769, 2336741, 2781625, 3134407, 3174823, 462574, 3685065, 224532, 257858, 343208, 563040, 774210, 1607414, 2434937, 2713337, 3145116, 3147589, 4213019, 4234392, 2740295, 343655, 1012025, 1079936, 1111007, 1808240, 2041669, 2076267, 2491687, 2770035, 3451309, 3932106, 4150583, 2184390, 652394, 1160726, 2375349, 2426968, 2498972, 2734159, 2856099, 2948851, 3077192, 3269137, 4165856, 904025, 1299684, 1431476, 1707397, 2609398, 3295986, 253027, 331661, 660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726]              100    [200273, 304101, 329243, 807112, 847730, 1785789, 2034082, 2732100, 3295719, 3404629, 3089763, 4092205, 193599, 3192188, 3223883, 3311319, 3659758, 4127670, 1028994, 2891643, 2974883, 3510792, 3686182, 3797023, 446524, 479266, 965844, 3605102, 4127725, 4235497, 1856705, 1953885, 2652988, 2695341, 3488332, 3821545, 72752, 283183, 292087, 385227, 511821, 4154255, 279059, 743128, 2161605, 3116568, 3494588, 3511205, 571782, 1169101, 1582440, 2274112, 2399872, 4007468, 326470, 1791840, 1979369, 2274912, 2391369, 4219148, 35891, 787082, 903129, 3194961, 4054903, 4246812, 114310, 1504490, 2161200, 2789913, 2825548, 3047677, 961833, 1199390, 1620832, 2028191, 3576499, 4348380, 699488, 1110363, 2737831, 3296808, 3334304, 3719537, 2712306, 528208, 3097466, 279154, 623837, 672773, 1577325, 4070170, 347896, 89239, 277542, 998679, 1214354, 1670768, 2124362, 2414006, ...]             30734
+6453     42041      972      4328  1652025097003             30740  [3184493]              1  [1071976, 1675446, 1853689, 2672728, 3184493]              5  [1717747, 2118647, 3205403, 3793726, 474277, 1071976, 1675446, 1853689, 2672728, 3184493]              10   [2609398, 3295986, 253027, 331661, 660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726, 474277, 1071976, 1675446, 1853689, 2672728, 3184493]              20   [4234392, 2740295, 343655, 1012025, 1079936, 1111007, 1808240, 2041669, 2076267, 2491687, 2770035, 3451309, 3932106, 4150583, 2184390, 652394, 1160726, 2375349, 2426968, 2498972, 2734159, 2856099, 2948851, 3077192, 3269137, 4165856, 904025, 1299684, 1431476, 1707397, 2609398, 3295986, 253027, 331661, 660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726, 474277, 1071976, 1675446, 1853689, 2672728, 3184493]              50  [2926705, 3213254, 3547876, 3900748, 4023932, 4178890, 1445628, 389039, 535344, 1986363, 2396281, 3036741, 3480492, 2783249, 3909997, 2919275, 3992504, 1445628, 2188378, 3629655, 3740158, 3781507, 1395632, 1544509, 1648969, 2878421, 3777027, 8646, 128331, 602514, 1449751, 1501950, 2038769, 2336741, 2781625, 3134407, 3174823, 462574, 3685065, 224532, 257858, 343208, 563040, 774210, 1607414, 2434937, 2713337, 3145116, 3147589, 4213019, 4234392, 2740295, 343655, 1012025, 1079936, 1111007, 1808240, 2041669, 2076267, 2491687, 2770035, 3451309, 3932106, 4150583, 2184390, 652394, 1160726, 2375349, 2426968, 2498972, 2734159, 2856099, 2948851, 3077192, 3269137, 4165856, 904025, 1299684, 1431476, 1707397, 2609398, 3295986, 253027, 331661, 660671, 1338910, 1802599, 3179096, 805277, 1397268, 1717747, 2118647, 3205403, 3793726, 474277, 1071976, 1675446, 1853689, 2672728, 3184493]              100    [200273, 304101, 329243, 807112, 847730, 1785789, 2034082, 2732100, 3295719, 3404629, 3089763, 4092205, 193599, 3192188, 3223883, 3311319, 3659758, 4127670, 1028994, 2891643, 2974883, 3510792, 3686182, 3797023, 446524, 479266, 965844, 3605102, 4127725, 4235497, 1856705, 1953885, 2652988, 2695341, 3488332, 3821545, 72752, 283183, 292087, 385227, 511821, 4154255, 279059, 743128, 2161605, 3116568, 3494588, 3511205, 571782, 1169101, 1582440, 2274112, 2399872, 4007468, 326470, 1791840, 1979369, 2274912, 2391369, 4219148, 35891, 787082, 903129, 3194961, 4054903, 4246812, 114310, 1504490, 2161200, 2789913, 2825548, 3047677, 961833, 1199390, 1620832, 2028191, 3576499, 4348380, 699488, 1110363, 2737831, 3296808, 3334304, 3719537, 2712306, 528208, 3097466, 279154, 623837, 672773, 1577325, 4070170, 347896, 89239, 277542, 998679, 1214354, 1670768, 2124362, 2414006, ...]             30740
+6454     38732      881      4486  1652025123404              2708  [3527488]              1  [1626082, 2054338, 2249163, 3197529, 3527488]              5  [2326442, 2414129, 2860569, 3786420, 776091, 1626082, 2054338, 2249163, 3197529, 3527488]              10  [232356, 664388, 1150684, 1476053, 1639415, 3567269, 4060498, 4265137, 483519, 1891334, 2326442, 2414129, 2860569, 3786420, 776091, 1626082, 2054338, 2249163, 3197529, 3527488]              20     [848280, 1959150, 2478226, 2617996, 2831652, 3098044, 3530526, 3883106, 3977695, 4072609, 4081073, 789908, 1162709, 1189363, 2176851, 2901738, 3557011, 4073809, 4079995, 464235, 585179, 718316, 762718, 1358124, 1700853, 2806870, 2969711, 3469916, 3788693, 3979511, 232356, 664388, 1150684, 1476053, 1639415, 3567269, 4060498, 4265137, 483519, 1891334, 2326442, 2414129, 2860569, 3786420, 776091, 1626082, 2054338, 2249163, 3197529, 3527488]              50  [1291186, 1341470, 1623809, 1709937, 1775052, 3404584, 960757, 1197365, 1508220, 1586499, 1834077, 2134901, 2359458, 2463979, 2721200, 3696017, 208636, 338769, 693373, 1152069, 1188127, 2124720, 2578845, 2786489, 2804493, 3368626, 3840647, 562661, 644570, 769480, 809687, 990153, 1059235, 1117808, 2455657, 3364940, 4113173, 4133596, 4201025, 195097, 791868, 1479873, 1691263, 2315207, 2370760, 2594677, 3739540, 3892623, 3923182, 4137515, 848280, 1959150, 2478226, 2617996, 2831652, 3098044, 3530526, 3883106, 3977695, 4072609, 4081073, 789908, 1162709, 1189363, 2176851, 2901738, 3557011, 4073809, 4079995, 464235, 585179, 718316, 762718, 1358124, 1700853, 2806870, 2969711, 3469916, 3788693, 3979511, 232356, 664388, 1150684, 1476053, 1639415, 3567269, 4060498, 4265137, 483519, 1891334, 2326442, 2414129, 2860569, 3786420, 776091, 1626082, 2054338, 2249163, 3197529, 3527488]              100  [51233, 101187, 979121, 1369434, 2074292, 2537917, 929910, 2185186, 2523226, 2735198, 3325385, 4029552, 478103, 812907, 3227908, 82136, 603119, 1189805, 1427463, 1530718, 1731091, 20770, 818293, 2726257, 3207338, 3794018, 1110901, 2339023, 192517, 614218, 2388697, 2789327, 3536349, 31277, 449764, 614218, 753401, 3067294, 195280, 2064548, 2526802, 3516226, 3625826, 1425998, 1572593, 1751051, 3419255, 3841336, 1110851, 1811136, 3512118, 3536349, 3756630, 4012036, 414860, 2660910, 3737717, 3879063, 4204731, 170260, 4247964, 738198, 974187, 3278627, 3514190, 2057642, 2100300, 2127370, 3168328, 4048269, 431252, 1074813, 1910639, 2354578, 3015495, 3159126, 849626, 1355318, 2002691, 2766409, 3057226, 3648568, 237685, 316212, 2586872, 2878739, 3055555, 1594685, 456181, 2966049, 3451171, 643755, 1834022, 2349494, 3323098, 3468069, 4216946, 1250362, 3171882, 73944, ...]              2708
+
+COLUMN: eval_idx
+  dtype: int64
+  nunique: 6455
+  min: 47
+  max: 43026
+  first values:
+[1538, 15186, 18426, 18829, 42223, 1539, 42148, 36204, 1540, 10111]
+
+COLUMN: user_id
+  dtype: int64
+  nunique: 761
+  min: 0
+  max: 999
+  first values:
+[34, 339, 393, 401, 979, 34, 976, 816, 34, 223]
+
+COLUMN: video_id
+  dtype: int64
+  nunique: 4274
+  min: 0
+  max: 7385
+  first values:
+[2867, 6298, 6453, 3317, 5041, 4470, 3015, 6088, 20, 1307]
+
+COLUMN: time_ms
+  dtype: int64
+  nunique: 6455
+  min: 1651900140977
+  max: 1652025123404
+  first values:
+[1651900140977, 1651900150997, 1651900161858, 1651900168788, 1651900188214, 1651900198449, 1651900202697, 1651900216821, 1651900218895, 1651900225363]
+
+
+####################################################################################################
+# 3. RELATIONSHIP CHECKS
+####################################################################################################
+
+EVENTS
+  rows: 43027
+  evaluation_id unique: True
+
+HISTORY
+  rows: 43027
+  eval_idx unique: True
+
+ID SET RELATIONSHIP
+  event evaluation_id count: 43027
+  history eval_idx count: 43027
+  history subset of event IDs: True
+  event subset of history IDs: True
+  exact same ID set: True
+
+EVENT KEY
+  columns: ['user_id', 'video_id', 'time_ms']
+  unique: True
+
+HISTORY KEY
+  columns: ['user_id', 'video_id', 'time_ms']
+  unique: True
+
+
+####################################################################################################
+# 4. SPLIT RELATIONSHIPS
+####################################################################################################
+
+TRAIN
+  rows: 30118
+  users: 977
+  eval_idx min: 0
+  eval_idx max: 43008
+
+VALIDATION
+  rows: 6454
+  users: 704
+  eval_idx min: 7
+  eval_idx max: 43017
+
+TEST
+  rows: 6455
+  users: 761
+  eval_idx min: 47
+  eval_idx max: 43026
+
+TRAIN vs VALIDATION
+  overlap: 0
+  disjoint: True
+
+TRAIN vs TEST
+  overlap: 0
+  disjoint: True
+
+VALIDATION vs TEST
+  overlap: 0
+  disjoint: True
+
+ALL SPLITS
+  union size: 43027
+  history size: 43027
+  exact coverage: True
+
+
+====================================================================================================
+END PHASE 8 CONTEXT DUMP
+====================================================================================================
