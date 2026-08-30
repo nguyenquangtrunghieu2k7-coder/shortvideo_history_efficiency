@@ -249,7 +249,7 @@ class KuaiRandDataset(Dataset):
 
             for i, hist in enumerate(truncated_hists):
 
-                if not hist:
+                if hist is None or len(hist) == 0:
                     continue
 
                 hist_ids = [int(video_id) for video_id in hist]
