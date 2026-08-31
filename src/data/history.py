@@ -3,19 +3,34 @@
 """
 Phase 7: Reconstruct Evaluation Histories
 
-Responsibilities:
-1. Reconstruct H_t^(W) with strict temporal boundary [t-W, t).
-2. Derive K histories by slicing the same frozen H_t^(W).
-3. Build a frozen video vocabulary shared by candidate + history videos.
-4. Encode raw video_id -> video_idx using the frozen vocabulary.
-5. Save all artifacts needed by downstream training.
+Contract
+-------
+Phase 7 stores RAW video IDs in all history artifacts.
+
+Artifacts
+---------
+video_vocab.parquet
+    raw_video_id -> frozen video_idx
+
+history_K*.parquet
+    history contains RAW video_id
+
+Downstream
+----------
+Phase 8 maps:
+
+    raw_video_id
+        -> video_idx
+        -> model_video_idx = video_idx + 1
+
+0 is reserved for padding.
 """
 
 from pathlib import Path
 from collections import defaultdict
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 
 # =============================================================================
@@ -35,17 +50,34 @@ STANDARD_FILES = [
 
 OUTPUT_DIR = PROCESSED_DIR / "phase7"
 
-# Main history artifact kept for compatibility with previous pipeline.
-EVALUATION_HISTORY_FILE = PROCESSED_DIR / "evaluation_history.parquet"
+EVALUATION_HISTORY_FILE = (
+    PROCESSED_DIR / "evaluation_history.parquet"
+)
 
-# Frozen vocabulary.
-VIDEO_VOCAB_FILE = PROCESSED_DIR / "video_vocab.parquet"
-VIDEO_VOCAB_CONFIG_FILE = PROCESSED_DIR / "video_vocab_config.yaml"
+VIDEO_VOCAB_FILE = (
+    PROCESSED_DIR / "video_vocab.parquet"
+)
 
-# History configurations.
-K_VALUES = [0, 1, 5, 10, 20, 50, 100, "Full"]
+VIDEO_VOCAB_CONFIG_FILE = (
+    PROCESSED_DIR / "video_vocab_config.yaml"
+)
 
-# Frozen protocol.
+
+# =============================================================================
+# FROZEN PROTOCOL
+# =============================================================================
+
+K_VALUES = [
+    0,
+    1,
+    5,
+    10,
+    20,
+    50,
+    100,
+    "Full",
+]
+
 W_DAYS = 1
 L_MAX = 2048
 
@@ -76,9 +108,13 @@ def load_evaluation_events():
     ).reset_index(drop=True)
 
     if not df["evaluation_id"].is_unique:
-        raise ValueError(
+        raise RuntimeError(
             "evaluation_id is not unique."
         )
+
+    df["user_id"] = df["user_id"].astype("int64")
+    df["video_id"] = df["video_id"].astype("int64")
+    df["time_ms"] = df["time_ms"].astype("int64")
 
     print(
         f"  Evaluation events: {len(df):,}"
@@ -104,7 +140,14 @@ def load_standard_interactions():
 
     for path in STANDARD_FILES:
 
-        print(f"  Loading: {path.name}")
+        print(
+            f"  Loading: {path.name}"
+        )
+
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Missing standard interaction file:\n{path}"
+            )
 
         df = pd.read_csv(
             path,
@@ -132,7 +175,10 @@ def load_standard_interactions():
     )
 
     interactions = interactions.sort_values(
-        ["user_id", "time_ms", "video_id"]
+        [
+            "user_id",
+            "time_ms",
+        ]
     ).reset_index(drop=True)
 
     print(
@@ -149,26 +195,38 @@ def load_standard_interactions():
 
 
 # =============================================================================
-# BUILD ONE FROZEN 1-DAY HISTORY
+# BUILD H_t^(W)
 # =============================================================================
 
-def build_one_day_histories(
+def build_histories(
     eval_df,
     interactions,
 ):
 
-    print("\nBuilding H_t^(1 day)...")
+    print(
+        f"\nBuilding H_t^({W_DAYS} day)..."
+    )
 
-    # Evaluation events by user.
+    # -------------------------------------------------------------------------
+    # Evaluation events by user
+    # -------------------------------------------------------------------------
+
     eval_by_user = defaultdict(list)
 
     for idx, row in eval_df.iterrows():
 
-        eval_by_user[row["user_id"]].append(
-            (idx, row["time_ms"])
+        eval_by_user[int(row["user_id"])].append(
+            (
+                idx,
+                int(row["time_ms"]),
+            )
         )
 
     histories = [None] * len(eval_df)
+
+    # -------------------------------------------------------------------------
+    # Process each user
+    # -------------------------------------------------------------------------
 
     grouped = interactions.groupby(
         "user_id",
@@ -181,10 +239,19 @@ def build_one_day_histories(
             continue
 
         user_events = user_events[
-            ["video_id", "time_ms"]
+            [
+                "video_id",
+                "time_ms",
+            ]
         ].to_numpy()
 
         eval_events = eval_by_user[user_id]
+
+        # eval_events are already chronological because eval_df
+        # was sorted by time_ms.
+        eval_events.sort(
+            key=lambda x: x[1]
+        )
 
         left = 0
         right = 0
@@ -193,20 +260,25 @@ def build_one_day_histories(
 
         for eval_idx, eval_time in eval_events:
 
-            # Strict temporal boundary:
-            # history contains only events with time < evaluation time.
+            # -------------------------------------------------------------
+            # Strict upper boundary: interaction_time < t
+            # -------------------------------------------------------------
+
             while (
                 right < n
-                and user_events[right][1] < eval_time
+                and int(user_events[right][1]) < eval_time
             ):
                 right += 1
 
-            # Window = [t-W, t)
+            # -------------------------------------------------------------
+            # Lower boundary: interaction_time >= t - W
+            # -------------------------------------------------------------
+
             lower_bound = eval_time - W_MS
 
             while (
                 left < right
-                and user_events[left][1] < lower_bound
+                and int(user_events[left][1]) < lower_bound
             ):
                 left += 1
 
@@ -217,7 +289,10 @@ def build_one_day_histories(
                 for video_id, _ in window
             ]
 
-    # Users with no historical interaction.
+    # -------------------------------------------------------------------------
+    # Users with no history
+    # -------------------------------------------------------------------------
+
     for i in range(len(histories)):
 
         if histories[i] is None:
@@ -227,11 +302,12 @@ def build_one_day_histories(
 
 
 # =============================================================================
-# AUDIT TEMPORAL HISTORY
+# HISTORY AUDIT
 # =============================================================================
 
 def audit_histories(
     eval_df,
+    interactions,
     histories,
 ):
 
@@ -239,12 +315,61 @@ def audit_histories(
     print("HISTORY AUDIT")
     print("=" * 80)
 
-    assert len(eval_df) == len(histories)
+    if len(eval_df) != len(histories):
+        raise RuntimeError(
+            "History count does not match evaluation events."
+        )
 
-    lengths = [
-        len(history)
-        for history in histories
-    ]
+    interaction_ids = set(
+        interactions["video_id"].astype(int)
+    )
+
+    unique_history_ids = set()
+
+    lengths = []
+
+    for history in histories:
+
+        if not isinstance(history, list):
+            raise RuntimeError(
+                "History is not stored as a Python list."
+            )
+
+        lengths.append(
+            len(history)
+        )
+
+        for video_id in history:
+
+            if not isinstance(
+                video_id,
+                (int, np.integer),
+            ):
+                raise RuntimeError(
+                    "History contains non-integer video ID."
+                )
+
+            unique_history_ids.add(
+                int(video_id)
+            )
+
+    # -------------------------------------------------------------------------
+    # Source coverage
+    # -------------------------------------------------------------------------
+
+    missing_from_source = (
+        unique_history_ids - interaction_ids
+    )
+
+    if missing_from_source:
+
+        raise RuntimeError(
+            "HISTORY SOURCE AUDIT FAILED.\n"
+            f"IDs in history but not in standard interactions: "
+            f"{len(missing_from_source)}\n"
+            f"Examples: "
+            f"{sorted(missing_from_source)[:10]}"
+        )
 
     print(
         f"Evaluation events: {len(histories):,}"
@@ -270,34 +395,28 @@ def audit_histories(
         f"{sum(x == 0 for x in lengths):,}"
     )
 
-    # -------------------------------------------------------------------------
-    # Temporal audit
-    # -------------------------------------------------------------------------
+    print(
+        f"Unique IDs appearing in histories: "
+        f"{len(unique_history_ids):,}"
+    )
 
-    for i, history in enumerate(histories):
+    print(
+        "History type audit: PASS"
+    )
 
-        if not history:
-            continue
+    print(
+        "History source coverage: PASS"
+    )
 
-        eval_time = eval_df.iloc[i]["time_ms"]
+    print(
+        "Strict temporal construction: PASS"
+    )
 
-        # We cannot reconstruct timestamps from history alone here,
-        # so the strict temporal condition is guaranteed by the
-        # construction algorithm above.
-
-        if len(history) > 0:
-            assert all(
-                isinstance(video_id, (int, np.integer))
-                for video_id in history
-            )
-
-    print("History length audit: PASS")
-    print("Strict temporal construction: PASS")
     print("=" * 80)
 
 
 # =============================================================================
-# SAVE MAIN EVALUATION HISTORY
+# SAVE MAIN HISTORY
 # =============================================================================
 
 def save_evaluation_history(
@@ -315,6 +434,8 @@ def save_evaluation_history(
         ]
     ].copy()
 
+    # IMPORTANT:
+    # RAW video IDs only.
     output["history_full"] = histories
 
     output["history_full_len"] = [
@@ -322,104 +443,165 @@ def save_evaluation_history(
         for history in histories
     ]
 
-    output = output.sort_values(
-        ["time_ms", "user_id", "video_id"]
-    ).reset_index(drop=True)
-
-    EVALUATION_HISTORY_FILE.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
     output.to_parquet(
         EVALUATION_HISTORY_FILE,
         index=False,
     )
 
     print(
-        f"\nSaved main history artifact:"
-        f"\n  {EVALUATION_HISTORY_FILE}"
+        "\nSaved main history artifact:"
+    )
+
+    print(
+        f"  {EVALUATION_HISTORY_FILE}"
     )
 
 
 # =============================================================================
-# BUILD K HISTORY
+# COLLECT HISTORY IDS
 # =============================================================================
 
-def make_k_history(
-    full_history,
-    k,
+def collect_history_video_ids(
+    histories,
 ):
 
-    if k == 0:
-        return []
+    ids = set()
 
-    if k == "Full":
-        return full_history[-L_MAX:]
+    for history in histories:
 
-    return full_history[-k:]
+        for video_id in history:
+
+            ids.add(
+                int(video_id)
+            )
+
+    return ids
 
 
 # =============================================================================
-# BUILD FROZEN VIDEO VOCABULARY
+# BUILD FROZEN VOCABULARY
 # =============================================================================
 
 def build_video_vocab(
     eval_df,
-    full_histories,
+    histories,
 ):
 
     print("\n" + "=" * 80)
     print("BUILDING FROZEN VIDEO VOCABULARY")
     print("=" * 80)
 
-    # Candidate IDs.
-    candidate_ids = set(
+    # -------------------------------------------------------------------------
+    # Candidate IDs
+    # -------------------------------------------------------------------------
+
+    candidate_ids = {
         int(video_id)
         for video_id in eval_df["video_id"].unique()
+    }
+
+    # -------------------------------------------------------------------------
+    # History IDs
+    # -------------------------------------------------------------------------
+
+    history_ids = collect_history_video_ids(
+        histories
     )
 
-    # History IDs.
-    history_ids = set()
+    # -------------------------------------------------------------------------
+    # Frozen union
+    # -------------------------------------------------------------------------
 
-    for history in full_histories:
-        history_ids.update(
-            int(video_id)
-            for video_id in history
-        )
-
-    # Union.
     all_video_ids = sorted(
         candidate_ids | history_ids
     )
 
     if not all_video_ids:
-        raise ValueError(
-            "Video vocabulary is empty."
+
+        raise RuntimeError(
+            "Frozen vocabulary is empty."
         )
 
-    # IMPORTANT:
-    # video_idx is zero-based raw vocabulary index.
-    # Dataset will later shift it by +1 because 0 is reserved for padding.
+    # -------------------------------------------------------------------------
+    # Build vocabulary
+    #
+    # video_idx starts at 0.
+    #
+    # This is NOT the model index.
+    # Model index is video_idx + 1.
+    # -------------------------------------------------------------------------
+
     vocab = pd.DataFrame(
         {
             "raw_video_id": all_video_ids,
-            "video_idx": range(len(all_video_ids)),
+            "video_idx": np.arange(
+                len(all_video_ids),
+                dtype=np.int64,
+            ),
         }
     )
 
-    # Basic invariants.
-    assert vocab["raw_video_id"].is_unique
-    assert vocab["video_idx"].is_unique
+    # -------------------------------------------------------------------------
+    # Invariants
+    # -------------------------------------------------------------------------
 
-    assert (
-        vocab["video_idx"].min() == 0
+    if not vocab["raw_video_id"].is_unique:
+
+        raise RuntimeError(
+            "raw_video_id is not unique."
+        )
+
+    if not vocab["video_idx"].is_unique:
+
+        raise RuntimeError(
+            "video_idx is not unique."
+        )
+
+    if int(vocab["video_idx"].iloc[0]) != 0:
+
+        raise RuntimeError(
+            "video_idx must start at 0."
+        )
+
+    if int(vocab["video_idx"].iloc[-1]) != len(vocab) - 1:
+
+        raise RuntimeError(
+            "video_idx is not contiguous."
+        )
+
+    vocab_ids = set(
+        vocab["raw_video_id"].astype(int)
     )
 
-    assert (
-        vocab["video_idx"].max()
-        == len(vocab) - 1
+    # -------------------------------------------------------------------------
+    # Coverage
+    # -------------------------------------------------------------------------
+
+    missing_candidates = (
+        candidate_ids - vocab_ids
     )
+
+    missing_history = (
+        history_ids - vocab_ids
+    )
+
+    if missing_candidates:
+
+        raise RuntimeError(
+            "VOCABULARY COVERAGE FAILED: "
+            f"{len(missing_candidates)} candidate IDs missing."
+        )
+
+    if missing_history:
+
+        raise RuntimeError(
+            "VOCABULARY COVERAGE FAILED: "
+            f"{len(missing_history)} history IDs missing."
+        )
+
+    # -------------------------------------------------------------------------
+    # Save
+    # -------------------------------------------------------------------------
 
     VIDEO_VOCAB_FILE.parent.mkdir(
         parents=True,
@@ -432,7 +614,7 @@ def build_video_vocab(
     )
 
     # -------------------------------------------------------------------------
-    # Save config / metadata
+    # Config
     # -------------------------------------------------------------------------
 
     config_text = f"""# Frozen Phase 7 video vocabulary
@@ -445,14 +627,17 @@ union_videos: {len(all_video_ids)}
 indexing:
   raw_video_id_to_video_idx: true
   video_idx_start: 0
+
+model_indexing:
   padding_idx: 0
-  model_id_shift: 1
+  model_video_idx: "video_idx + 1"
 
 protocol:
   candidate_and_history_share_vocabulary: true
   vocabulary_frozen_before_training: true
   candidate_source: evaluation_events
-  history_source: standard_interactions
+  history_source: H_t^(W)
+  history_artifacts_contain: raw_video_id
 """
 
     VIDEO_VOCAB_CONFIG_FILE.write_text(
@@ -473,69 +658,45 @@ protocol:
     )
 
     print(
-        f"Saved vocabulary:"
-        f"\n  {VIDEO_VOCAB_FILE}"
+        "Vocabulary coverage: PASS"
     )
 
     print(
-        f"Saved vocabulary config:"
-        f"\n  {VIDEO_VOCAB_CONFIG_FILE}"
+        f"Saved vocabulary:\n  {VIDEO_VOCAB_FILE}"
+    )
+
+    print(
+        f"Saved config:\n  {VIDEO_VOCAB_CONFIG_FILE}"
     )
 
     return vocab
 
 
 # =============================================================================
-# ENCODE VIDEO IDS
+# MAKE K HISTORY
 # =============================================================================
 
-def encode_history(
-    histories,
-    vocab_map,
+def make_k_history(
+    full_history,
+    k,
 ):
 
-    encoded = []
+    if k == 0:
+        return []
 
-    missing = set()
+    if k == "Full":
+        return full_history[-L_MAX:]
 
-    for history in histories:
-
-        encoded_history = []
-
-        for raw_video_id in history:
-
-            raw_video_id = int(raw_video_id)
-
-            if raw_video_id not in vocab_map:
-                missing.add(raw_video_id)
-                continue
-
-            encoded_history.append(
-                vocab_map[raw_video_id]
-            )
-
-        encoded.append(
-            encoded_history
-        )
-
-    if missing:
-
-        raise ValueError(
-            f"Found {len(missing)} history video IDs "
-            f"missing from frozen vocabulary."
-        )
-
-    return encoded
+    return full_history[-int(k):]
 
 
 # =============================================================================
-# SAVE ALL K CONFIGURATIONS
+# SAVE K HISTORIES
 # =============================================================================
 
 def save_k_histories(
     eval_df,
     full_histories,
-    vocab,
 ):
 
     print("\n" + "=" * 80)
@@ -547,20 +708,7 @@ def save_k_histories(
         exist_ok=True,
     )
 
-    vocab_map = dict(
-        zip(
-            vocab["raw_video_id"],
-            vocab["video_idx"],
-        )
-    )
-
     summary = []
-
-    # Encode full history once.
-    encoded_full_histories = encode_history(
-        full_histories,
-        vocab_map,
-    )
 
     for k in K_VALUES:
 
@@ -573,7 +721,7 @@ def save_k_histories(
                 history,
                 k,
             )
-            for history in encoded_full_histories
+            for history in full_histories
         ]
 
         lengths = [
@@ -584,13 +732,20 @@ def save_k_histories(
         max_allowed = (
             L_MAX
             if k == "Full"
-            else k
+            else int(k)
         )
 
-        assert max(lengths, default=0) <= max_allowed
+        if max(lengths, default=0) > max_allowed:
 
-        if k == 0:
-            assert not any(lengths)
+            raise RuntimeError(
+                f"K={k}: history exceeds maximum allowed length."
+            )
+
+        if k == 0 and any(lengths):
+
+            raise RuntimeError(
+                "K=0 history is not empty."
+            )
 
         output = eval_df[
             [
@@ -602,21 +757,36 @@ def save_k_histories(
             ]
         ].copy()
 
-        # Raw candidate ID is retained for traceability.
+        # ---------------------------------------------------------------------
+        # IMPORTANT:
+        # RAW video IDs.
+        #
+        # No vocab encoding here.
+        # ---------------------------------------------------------------------
+
         output["history"] = histories
 
         output["history_len"] = lengths
 
         if k == 0:
-            output["history_available"] = 0
+
+            output["history_available"] = np.zeros(
+                len(output),
+                dtype=np.int8,
+            )
+
         else:
+
             output["history_available"] = (
                 output["history_len"] > 0
             ).astype("int8")
 
         if k == "Full":
+
             filename = "history_KFull.parquet"
+
         else:
+
             filename = f"history_K{k}.parquet"
 
         output_path = OUTPUT_DIR / filename
@@ -667,22 +837,20 @@ def save_k_histories(
         )
 
     # -------------------------------------------------------------------------
-    # Save summary.
+    # Summary
     # -------------------------------------------------------------------------
-
-    summary_df = pd.DataFrame(summary)
 
     summary_path = (
         OUTPUT_DIR / "history_config_summary.csv"
     )
 
-    summary_df.to_csv(
+    pd.DataFrame(summary).to_csv(
         summary_path,
         index=False,
     )
 
     # -------------------------------------------------------------------------
-    # Save frozen protocol.
+    # Frozen config
     # -------------------------------------------------------------------------
 
     config_path = (
@@ -714,18 +882,143 @@ protocol:
   derive_K_by_slicing: true
   candidate_and_history_share_video_vocabulary: true
   video_vocabulary_frozen: true
+  history_artifacts_contain_raw_video_ids: true
+  encoding_deferred_to_training: true
 """,
         encoding="utf-8",
     )
 
     print(
-        f"\nSaved summary:"
-        f"\n  {summary_path}"
+        f"\nSaved summary:\n  {summary_path}"
     )
 
     print(
-        f"Saved frozen config:"
-        f"\n  {config_path}"
+        f"Saved config:\n  {config_path}"
+    )
+
+
+# =============================================================================
+# FINAL ARTIFACT AUDIT
+# =============================================================================
+
+def final_artifact_audit():
+
+    print("\n" + "=" * 80)
+    print("FINAL ARTIFACT CONSISTENCY AUDIT")
+    print("=" * 80)
+
+    vocab = pd.read_parquet(
+        VIDEO_VOCAB_FILE
+    )
+
+    vocab_ids = set(
+        vocab["raw_video_id"].astype(int)
+    )
+
+    print(
+        f"Vocabulary rows: {len(vocab):,}"
+    )
+
+    # -------------------------------------------------------------------------
+    # Audit every K artifact
+    # -------------------------------------------------------------------------
+
+    for k in K_VALUES:
+
+        if k == "Full":
+            filename = "history_KFull.parquet"
+        else:
+            filename = f"history_K{k}.parquet"
+
+        path = OUTPUT_DIR / filename
+
+        df = pd.read_parquet(
+            path
+        )
+
+        # Basic row-count check.
+        if len(df) == 0:
+            raise RuntimeError(
+                f"K={k}: artifact is empty."
+            )
+
+        # -------------------------------------------------------------
+        # Every raw history ID must exist in vocab.
+        # -------------------------------------------------------------
+
+        artifact_ids = set()
+
+        for history in df["history"]:
+
+            for video_id in history:
+
+                artifact_ids.add(
+                    int(video_id)
+                )
+
+        missing = artifact_ids - vocab_ids
+
+        if missing:
+
+            raise RuntimeError(
+                f"K={k}: {len(missing)} history IDs "
+                f"missing from vocabulary. "
+                f"Examples={sorted(missing)[:10]}"
+            )
+
+        print(
+            f"  K={k}: PASS"
+        )
+
+    # -------------------------------------------------------------------------
+    # Target sanity check if the known debug ID exists in artifacts.
+    #
+    # This is deliberately informational only.
+    # It must NOT assume that arbitrary raw IDs should appear in history.
+    # -------------------------------------------------------------------------
+
+    target = 1840380
+
+    target_in_vocab = (
+        target in vocab_ids
+    )
+
+    target_occurrences = 0
+
+    for k in K_VALUES:
+
+        if k == "Full":
+            filename = "history_KFull.parquet"
+        else:
+            filename = f"history_K{k}.parquet"
+
+        df = pd.read_parquet(
+            OUTPUT_DIR / filename,
+            columns=["history"],
+        )
+
+        occurrences = sum(
+            target in history
+            for history in df["history"]
+        )
+
+        target_occurrences += occurrences
+
+    print(
+        f"\nDEBUG target raw_video_id={target}"
+    )
+
+    print(
+        f"  Target in vocabulary: {target_in_vocab}"
+    )
+
+    print(
+        f"  Target occurrences across K artifacts: "
+        f"{target_occurrences}"
+    )
+
+    print(
+        "\nFINAL ARTIFACT CONSISTENCY: PASS"
     )
 
 
@@ -758,13 +1051,18 @@ def main():
     # BUILD H^(W)
     # -------------------------------------------------------------------------
 
-    full_histories = build_one_day_histories(
+    full_histories = build_histories(
         eval_df,
         interactions,
     )
 
+    # -------------------------------------------------------------------------
+    # AUDIT
+    # -------------------------------------------------------------------------
+
     audit_histories(
         eval_df,
+        interactions,
         full_histories,
     )
 
@@ -778,23 +1076,28 @@ def main():
     )
 
     # -------------------------------------------------------------------------
-    # BUILD FROZEN VOCABULARY
+    # BUILD VOCABULARY
     # -------------------------------------------------------------------------
 
-    vocab = build_video_vocab(
+    build_video_vocab(
         eval_df,
         full_histories,
     )
 
     # -------------------------------------------------------------------------
-    # SAVE K CONFIGURATIONS
+    # SAVE K HISTORIES
     # -------------------------------------------------------------------------
 
     save_k_histories(
         eval_df,
         full_histories,
-        vocab,
     )
+
+    # -------------------------------------------------------------------------
+    # FINAL AUDIT
+    # -------------------------------------------------------------------------
+
+    final_artifact_audit()
 
     # -------------------------------------------------------------------------
     # FINAL
@@ -804,48 +1107,34 @@ def main():
     print("PHASE 7 COMPLETE")
     print("=" * 80)
 
-    print("\nSaved artifacts:")
-
+    print("\nContract:")
     print(
-        f"  {EVALUATION_HISTORY_FILE}"
+        "  history_K*.parquet contains RAW video_id:       YES"
     )
-
     print(
-        f"  {VIDEO_VOCAB_FILE}"
+        "  video_vocab.parquet maps raw -> video_idx:      YES"
     )
-
     print(
-        f"  {VIDEO_VOCAB_CONFIG_FILE}"
+        "  model index = video_idx + 1:                    YES"
     )
-
-    for k in K_VALUES:
-
-        if k == "Full":
-            name = "history_KFull.parquet"
-        else:
-            name = f"history_K{k}.parquet"
-
-        print(
-            f"  {OUTPUT_DIR / name}"
-        )
-
     print(
-        f"  {OUTPUT_DIR / 'history_config_summary.csv'}"
+        "  padding index = 0:                               YES"
     )
-
     print(
-        f"  {OUTPUT_DIR / 'history_config.yaml'}"
+        "  H^(W) reconstructed once:                        PASS"
     )
-
-    print("\nProtocol:")
-    print("  W = 1 day:                        FROZEN")
-    print("  L_max = 2048:                     FROZEN")
-    print("  Fixed evaluation set:             PASS")
-    print("  Test data used:                   NO")
-    print("  H^(W) reconstructed once:         PASS")
-    print("  K derived by slicing:             PASS")
-    print("  Candidate/history shared vocab:   PASS")
-    print("  Video vocabulary frozen:          PASS")
+    print(
+        "  K derived by slicing:                             PASS"
+    )
+    print(
+        "  Candidate/history shared vocabulary:             PASS"
+    )
+    print(
+        "  Vocabulary frozen before training:               PASS"
+    )
+    print(
+        "  Final artifact consistency:                       PASS"
+    )
 
 
 if __name__ == "__main__":

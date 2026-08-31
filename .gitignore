@@ -27,3 +27,4 @@ reports/
 
 # Python tooling
 *.egg-info/models/*.pth
+models/*.pth

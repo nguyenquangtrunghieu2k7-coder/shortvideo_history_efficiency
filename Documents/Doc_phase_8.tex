@@ -1,0 +1,360 @@
+\documentclass[12pt,a4paper]{article}
+
+% ============================================================
+% PACKAGES & CONFIGURATION
+% ============================================================
+
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[vietnamese]{babel}
+
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{enumitem}
+
+\geometry{
+    a4paper,
+    left=25mm,
+    right=25mm,
+    top=25mm,
+    bottom=25mm
+}
+
+% Tùy chỉnh màu sắc đường link đồng bộ với Phase 7
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    citecolor=black
+}
+
+% ============================================================
+% DOCUMENT METADATA
+% ============================================================
+
+\title{
+    \textbf{BÁO CÁO KẾT QUẢ: GIAI ĐOẠN 8}\\
+    \large{Huấn luyện Baseline \& Đánh giá Ngân sách Lịch sử}
+}
+
+\author{Dự án: How Much Intelligence Can We Get For How Little?}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\hrule
+\vspace{15pt}
+
+% ============================================================
+\section{Mục tiêu của Phase 8}
+% ============================================================
+
+Phase 8 là bước thực nghiệm chính đầu tiên của project. Mục tiêu của phase này là kiểm tra một câu hỏi trung tâm:
+
+\begin{quote}
+\textit{
+Khi một mô hình recommendation chỉ được phép quan sát một lượng lịch sử hành vi gần đây nhất của người dùng, lượng lịch sử đó ảnh hưởng như thế nào đến khả năng dự đoán hành vi tiếp theo?
+}
+\end{quote}
+
+Thay vì giả định rằng ``càng nhiều history thì càng tốt'', project xây dựng một thí nghiệm có kiểm soát bằng cách thay đổi duy nhất lượng history được phép quan sát. Cụ thể, tám điều kiện được đánh giá:
+
+\[
+K \in \{0, 1, 5, 10, 20, 50, 100, \mathrm{Full}\}
+\]
+
+Trong đó:
+\begin{itemize}[noitemsep]
+    \item $K=0$: mô hình không được sử dụng lịch sử hành vi;
+    \item $K=1$: chỉ được quan sát tương tác gần nhất;
+    \item $K=5$: được quan sát tối đa 5 tương tác gần nhất;
+    \item $K=10$: tối đa 10 tương tác;
+    \item $K=20$: tối đa 20 tương tác;
+    \item $K=50$: tối đa 50 tương tác;
+    \item $K=100$: tối đa 100 tương tác;
+    \item $K=\mathrm{Full}$: sử dụng phần history được tái dựng trong cửa sổ thời gian cố định, với giới hạn tối đa $L_{\max}=2048$.
+\end{itemize}
+
+Điểm quan trọng là các điều kiện này sử dụng cùng một evaluation set và cùng một protocol. Do đó, sự thay đổi trong kết quả được diễn giải chủ yếu theo sự thay đổi về lượng thông tin lịch sử được cung cấp cho mô hình.
+
+% ============================================================
+\section{Bài toán dự đoán}
+% ============================================================
+
+Mỗi evaluation event tương ứng với một tình huống trong đó hệ thống cần đánh giá một video candidate đối với một user tại một thời điểm cụ thể. Ta ký hiệu:
+\[
+u = \text{user}, \quad v = \text{candidate video}, \quad t = \text{thời điểm evaluation}
+\]
+
+Tại thời điểm $t$, mô hình được cung cấp một phần lịch sử hành vi của user trước thời điểm đó:
+\[
+H_t^{(K)} = (v_{t_1}, v_{t_2}, \ldots, v_{t_K}), \qquad t_i < t
+\]
+
+Mục tiêu là dự đoán liệu user có thực hiện hành vi mục tiêu đối với candidate video hay không. Trong dataset, nhãn được sử dụng là:
+\[
+y = \texttt{long\_view}
+\]
+
+Do đó, mô hình học một hàm:
+\[
+f_\theta(u, v, H_t^{(K)}) \rightarrow \hat{p}
+\]
+trong đó $\hat{p}$ là score thể hiện mức độ mô hình cho rằng candidate video có khả năng tạo ra hành vi mục tiêu.
+
+% ============================================================
+\section{Tại sao cần một baseline model?}
+% ============================================================
+
+Trước khi thử các kiến trúc phức tạp hơn, project cần một mô hình baseline đủ đơn giản để trả lời câu hỏi nghiên cứu một cách rõ ràng. Baseline có ba vai trò chính:
+
+\subsection{Tách ảnh hưởng của history khỏi ảnh hưởng của architecture}
+Nếu mỗi giá trị $K$ sử dụng một kiến trúc khác nhau, khi kết quả thay đổi, ta không thể biết sự thay đổi đến từ (1) lượng history khác nhau, hay (2) architecture khác nhau. Vì vậy, Phase 8 cố định cùng một architecture cho tất cả các điều kiện:
+\[
+\mathrm{Architecture}_{K=0} = \mathrm{Architecture}_{K=1} = \cdots = \mathrm{Architecture}_{K=\mathrm{Full}}
+\]
+Chỉ lượng thông tin lịch sử được thay đổi.
+
+\subsection{Baseline cần đủ đơn giản để dễ kiểm soát}
+Mục tiêu của Phase 8 chưa phải là xây dựng một recommendation model state-of-the-art, mà là đo lường:
+\[
+\text{Predictive signal} \quad \text{under different history budgets}
+\]
+Một baseline đơn giản giúp giảm số lượng yếu tố có thể gây nhiễu cho thí nghiệm, đồng thời giúp việc tái lập kết quả dễ dàng hơn.
+
+\subsection{Baseline là mốc tham chiếu cho các phase sau}
+Nếu một kiến trúc phức tạp hơn được thử nghiệm ở các phase sau, kết quả của nó có thể được so sánh với baseline để trả lời hai câu hỏi:
+\begin{enumerate}[noitemsep]
+    \item History nhiều hơn có thực sự mang lại predictive signal không?
+    \item Architecture phức tạp hơn có khai thác signal đó tốt hơn không?
+\end{enumerate}
+
+% ============================================================
+\section{Thiết kế thực nghiệm}
+% ============================================================
+
+Phase 8 sử dụng cùng một evaluation set cho tất cả các điều kiện $K$. Số lượng evaluation events là:
+\[
+N = 43,027
+\]
+Các điều kiện được train độc lập ($K \in \{0, 1, 5, 10, 20, 50, 100, \mathrm{Full}\}$). Mỗi điều kiện có một quá trình training riêng, tuy nhiên architecture, evaluation set và protocol được giữ cố định. Điều này tạo ra một \textit{controlled experiment}:
+\[
+\boxed{ \text{Change } K \quad \Rightarrow \quad \text{observe change in performance} }
+\]
+
+% ============================================================
+\section{Training và model selection}
+% ============================================================
+
+Đối với mỗi giá trị $K$, mô hình được train trên training set và được đánh giá trên validation set sau từng epoch. Validation set có vai trò chọn checkpoint tốt nhất:
+\[
+e^*_K = \arg\max_e \mathrm{AUC}_{\mathrm{val}}(K, e)
+\]
+Checkpoint tại epoch $e^*_K$ được freeze trước khi đánh giá trên test set.
+
+Quy trình này rất quan trọng vì test set không được sử dụng để quyết định khi nào dừng training hoặc chọn checkpoint. Pipeline có dạng:
+\[
+\text{Training} \rightarrow \text{Validation} \rightarrow \text{Freeze checkpoint} \rightarrow \text{Test}
+\]
+Do đó, test set chỉ được sử dụng ở bước cuối để ước lượng khả năng generalization của model.
+
+% ============================================================
+\section{Metric: ROC-AUC}
+% ============================================================
+
+Metric chính của Phase 8 là \textbf{ROC-AUC}. Đây là một metric phổ biến cho binary classification, đặc biệt phù hợp khi model tạo ra một score hoặc xác suất thay vì chỉ đưa ra quyết định 0/1.
+
+Trực giác quan trọng hơn công thức:
+\begin{quote}
+\textbf{ROC-AUC đo khả năng model xếp các positive example cao hơn negative example.}
+\end{quote}
+
+Một cách diễn giải tương đương là:
+\[
+\mathrm{AUC} = P(\text{score của positive} > \text{score của negative})
+\]
+Ví dụ, nếu $\mathrm{AUC} = 0.70$, có thể hiểu trực quan rằng khi lấy ngẫu nhiên một positive và một negative, model có xác suất khoảng $70\%$ xếp positive cao hơn negative. Trong recommendation, cách hiểu này đặc biệt phù hợp vì hệ thống thường quan tâm đến việc candidate nào nên được xếp cao hơn candidate nào.
+
+% ============================================================
+\section{Tại sao dùng ROC-AUC thay vì Accuracy?}
+% ============================================================
+
+Accuracy không phải là lựa chọn lý tưởng. Nếu dữ liệu có nhiều negative hơn positive, một model có thể dự đoán hầu hết các sample là negative và vẫn đạt accuracy cao. Ngoài ra, recommendation model thường tạo ra continuous score $\hat{p} \in [0,1]$, và thứ quan trọng là chất lượng ranking hơn là một threshold cố định.
+
+ROC-AUC không yêu cầu chọn một threshold duy nhất để đánh giá model. Nó xem xét toàn bộ các threshold có thể, phù hợp với mục tiêu:
+\[
+\boxed{ \text{Đánh giá khả năng ranking candidate dựa trên thông tin history} }
+\]
+
+% ============================================================
+\section{Kết quả}
+% ============================================================
+
+Kết quả cuối cùng của Phase 8 được trình bày trong Bảng~\ref{tab:results}.
+
+\begin{table}[H]
+\centering
+\caption{Kết quả baseline theo lượng history $K$.}
+\label{tab:results}
+\begin{tabular}{lccc}
+\toprule
+\textbf{$K$} & \textbf{Best Epoch} & \textbf{Best Val AUC} & \textbf{Test AUC} \\
+\midrule
+0       & 10 & 0.590352 & 0.575222 \\
+1       & 4  & 0.507195 & 0.521342 \\
+5       & 8  & 0.543251 & 0.550143 \\
+10      & 6  & 0.558826 & 0.549947 \\
+20      & 7  & 0.578821 & 0.556058 \\
+50      & 11 & 0.598103 & 0.564512 \\
+100     & 10 & 0.611039 & 0.579012 \\
+Full    & 13 & 0.659740 & \textbf{0.614246} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{Phân tích kết quả}
+% ============================================================
+
+\subsection{Quan sát 1: $K=0$ đã có predictive signal}
+Điều kiện $K=0$ đạt $\mathrm{Test\ AUC} = 0.575222$. Điều này cho thấy model vẫn có khả năng dự đoán tốt hơn random ngay cả khi không được cung cấp history. 
+\[
+\boxed{ K=0 = \text{performance without behavioral history} }
+\]
+Các điều kiện $K>0$ cần được so sánh với mốc này để xác định history thực sự đóng góp thêm bao nhiêu predictive information.
+
+\subsection{Quan sát 2: Chỉ một interaction gần nhất chưa đủ}
+Với $K=1$, $\mathrm{Test\ AUC}$ chỉ đạt $0.521342$, thấp hơn đáng kể so với $K=0$. Điều này cho thấy một interaction đơn lẻ gần nhất không cung cấp đủ thông tin để baseline model hình thành một representation hữu ích, và việc ``thêm history'' không tự động đảm bảo hiệu năng tăng.
+
+\subsection{Quan sát 3: Khi history tăng từ 5 đến 20, hiệu năng tăng dần}
+Nhìn chung, performance ở nhóm này ($K=5, 10, 20$ với AUC tương ứng là $0.5501, 0.5499, 0.5560$) cao hơn $K=1$. Tuy nhiên, mức tăng chưa hoàn toàn đơn điệu ($\mathrm{AUC}_{K=10} < \mathrm{AUC}_{K=5}$). Predictive signal bắt đầu xuất hiện rõ hơn khi model có quyền quan sát nhiều interaction hơn, nhưng ở các history budget nhỏ, hiệu năng vẫn có dao động.
+
+\subsection{Quan sát 4: $K=50$ và $K=100$ cho thấy lợi ích rõ hơn}
+Đáng chú ý, $K=100$ đã đạt mức cao hơn baseline $K=0$ ($0.579012 > 0.575222$). Điều này cung cấp bằng chứng thực nghiệm rằng một lượng history đủ lớn có thể bổ sung predictive information vượt ra ngoài baseline không-history.
+
+\subsection{Quan sát 5: Full history đạt kết quả tốt nhất}
+Điều kiện $K=\mathrm{Full}$ đạt kết quả cao nhất:
+\[
+\boxed{ \mathrm{Test\ AUC} = 0.614246 }
+\]
+So với $K=0$, Full history cải thiện khoảng $6.78\%$. Điều này cho thấy history có predictive value đáng kể khi model được phép quan sát đủ nhiều hành vi gần đây.
+
+% ============================================================
+\section{Tóm tắt xu hướng}
+% ============================================================
+
+Xu hướng tổng quát có thể được mô tả như sau:
+\[
+\text{very short history} \rightarrow \text{limited predictive signal}
+\]
+trong khi:
+\[
+\text{larger history} \rightarrow \text{stronger predictive signal}
+\]
+
+Tuy nhiên, kết quả cũng cho thấy mối quan hệ không hoàn toàn tuyến tính ($K\uparrow \not\Rightarrow \mathrm{AUC}\uparrow$ ở mọi bước). Do đó, câu hỏi nghiên cứu không nên được rút gọn thành ``càng nhiều history càng tốt'', mà phù hợp hơn là:
+
+\begin{quote}
+\textit{
+Có tồn tại một history budget nhỏ hơn đáng kể so với Full nhưng vẫn giữ được phần lớn predictive performance hay không?
+}
+\end{quote}
+
+% ============================================================
+\section{Kiểm soát tính hợp lệ của thực nghiệm}
+% ============================================================
+
+Phase 8 vượt qua toàn bộ các kiểm tra artifact và protocol:
+
+\begin{table}[H]
+\centering
+\caption{Các điều kiện kiểm soát của Phase 8.}
+\begin{tabular}{lc}
+\toprule
+\textbf{Điều kiện} & \textbf{Kết quả} \\
+\midrule
+Frozen video vocabulary & PASS \\
+Raw ID $\rightarrow$ vocabulary $\rightarrow$ model ID & PASS \\
+Padding index = 0 & PASS \\
+Same architecture across $K$ & PASS \\
+Independent training per $K$ & PASS \\
+Validation-based model selection & PASS \\
+Test after checkpoint freeze & PASS \\
+Phase 8 artifact consistency & PASS \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Đặc biệt, vocabulary được cố định trước training, mapping có dạng:
+\[
+\text{raw video ID} \rightarrow \text{frozen video vocabulary} \rightarrow \text{video index}
+\]
+Model index được dịch thêm một đơn vị để dành $0$ cho padding:
+\[
+\text{model\_id} = \text{video\_idx} + 1
+\]
+
+% ============================================================
+\section{Interpretation và giới hạn}
+% ============================================================
+
+Kết quả Phase 8 cung cấp bằng chứng rằng behavioral history có predictive value, nhưng cần tránh diễn giải quá mức:
+\begin{itemize}[noitemsep]
+    \item \textbf{Thứ nhất:} Không chứng minh rằng Full history luôn là lựa chọn tốt nhất trong production do chi phí hệ thống.
+    \item \textbf{Thứ hai:} Không chứng minh rằng mọi user đều cần cùng một lượng history.
+    \item \textbf{Thứ ba:} Kết quả chỉ phản ánh performance của baseline model hiện tại.
+\end{itemize}
+Do đó, kết quả hiện tại nên được hiểu là:
+\[
+\boxed{ \text{Evidence about the value of history under a controlled baseline} }
+\]
+
+% ============================================================
+\section{Kết luận Phase 8}
+% ============================================================
+
+Phase 8 đã hoàn thành thực nghiệm baseline trên tám history budgets. Kết quả cho thấy ba điểm chính:
+\begin{enumerate}
+    \item \textbf{Không có history vẫn có predictive signal.} Điều kiện $K=0$ đạt Test AUC $0.575222$.
+    \item \textbf{Một lượng history cực ngắn chưa chắc mang lại lợi ích.} $K=1$ chỉ đạt $0.521342$.
+    \item \textbf{History lớn hơn có xu hướng cung cấp thêm predictive information.} $K=100$ đạt $0.579012$, trong khi Full đạt $\boxed{0.614246}$, cải thiện khoảng $0.0390$ AUC tuyệt đối so với $K=0$.
+\end{enumerate}
+
+Vì vậy, Phase 8 cung cấp một baseline thực nghiệm cho giả thuyết rằng:
+\begin{quote}
+\textbf{Recent behavioral history chứa predictive information đối với hành vi long-view, nhưng lượng information cần thiết không thể được giả định trước và cần được đo lường thực nghiệm.}
+\end{quote}
+
+Đây là cơ sở để chuyển sang các phase tiếp theo nhằm xác định \textbf{history budget hiệu quả}.
+
+% ============================================================
+\section{Artifacts}
+% ============================================================
+
+Các kết quả của Phase 8 được lưu trong:
+\begin{verbatim}
+data/processed/phase8/baseline_results.csv
+\end{verbatim}
+
+File này chứa kết quả theo từng $K$, bao gồm: \textit{best epoch, best validation AUC, test AUC}. Phase 8 được xác nhận hoàn thành với:
+
+\begin{verbatim}
+PHASE 8 FINAL ARTIFACT AUDIT: PASS
+PHASE 8 COMPLETE
+\end{verbatim}
+
+\vspace{15pt}
+\begin{center}
+\large\textbf{KẾT LUẬN: GIAI ĐOẠN 8 -- HOÀN THÀNH 100\%}
+\end{center}
+
+\end{document}

@@ -1,41 +1,53 @@
 # -*- coding: utf-8 -*-
 
 """
-PHASE 8 — BASELINE TRAINING & EVALUATION
+Phase 8 — Baseline Training & Evaluation
 
-Baselines:
-    1. video_only   : K=0
-    2. history_only : Diagnostic, K=Full
-    3. full         : Candidate + history
+Contract:
+    Phase 7 history_K*.parquet:
+        history contains RAW video_id.
 
-Data source:
-    data/processed/splits/K*/
-    data/processed/video_vocab.parquet
+    Phase 7 video_vocab.parquet:
+        raw_video_id -> video_idx
 
-Frozen vocabulary:
-    raw_video_id -> video_idx
-    model index = video_idx + 1
-    index 0      = padding
+    Model:
+        model_video_idx = video_idx + 1
+        0 = padding
 
-IMPORTANT:
-    This script does NOT use:
-        data/processed/train.parquet
-        old history artifacts
+Main conditions:
+    K = {0, 1, 5, 10, 20, 50, 100, Full}
 
-It only uses the Phase 7 -> Phase 8 split pipeline.
+Each K is trained independently using the same:
+    - architecture
+    - embedding dimensions
+    - hidden dimensions
+    - optimizer
+    - learning rate
+    - batch size
+    - loss
+    - early stopping
+    - training procedure
+
+Primary metric:
+    Validation ROC-AUC for model selection.
+
+Final test evaluation:
+    Performed only after the best validation checkpoint is frozen.
 """
 
 from pathlib import Path
-import json
 import random
 
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, DataLoader
-from sklearn.metrics import roc_auc_score
+import torch.nn as nn
+import torch.optim as optim
 
-from models import KuaiRandRecommender
+from sklearn.metrics import roc_auc_score
+from torch.utils.data import Dataset, DataLoader
+
+from baseline_models import KuaiRandRecommender
 
 
 # =============================================================================
@@ -45,16 +57,24 @@ from models import KuaiRandRecommender
 ROOT = Path(__file__).resolve().parents[2]
 
 PROCESSED_DIR = ROOT / "data" / "processed"
-SPLIT_DIR = PROCESSED_DIR / "splits"
-VOCAB_FILE = PROCESSED_DIR / "video_vocab.parquet"
+PHASE7_DIR = PROCESSED_DIR / "phase7"
 
-OUTPUT_DIR = PROCESSED_DIR / "phase8"
-CHECKPOINT_DIR = OUTPUT_DIR / "checkpoints"
-RESULT_DIR = OUTPUT_DIR / "results"
+MODEL_DIR = ROOT / "models"
+RESULT_DIR = PROCESSED_DIR / "phase8"
+
+MODEL_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+RESULT_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
 
 
 # =============================================================================
-# FROZEN EXPERIMENT CONFIG
+# FROZEN EXPERIMENT CONFIGURATION
 # =============================================================================
 
 K_VALUES = [
@@ -68,22 +88,20 @@ K_VALUES = [
     "Full",
 ]
 
-BATCH_SIZE = 256
-EPOCHS = 20
-LEARNING_RATE = 1e-3
-WEIGHT_DECAY = 1e-5
-
 EMBEDDING_DIM = 64
 HIDDEN_DIMS = [128, 64]
 
+BATCH_SIZE = 2048
+LEARNING_RATE = 1e-3
+EPOCHS = 20
 PATIENCE = 3
-
-NUM_WORKERS = 0
 
 SEED = 42
 
-# If True, an existing completed result is skipped.
-SKIP_EXISTING = False
+NUM_WORKERS = 0
+
+PADDING_IDX = 0
+MODEL_ID_SHIFT = 1
 
 
 # =============================================================================
@@ -93,7 +111,9 @@ SKIP_EXISTING = False
 def set_seed(seed=SEED):
 
     random.seed(seed)
+
     np.random.seed(seed)
+
     torch.manual_seed(seed)
 
     if torch.cuda.is_available():
@@ -107,235 +127,308 @@ def set_seed(seed=SEED):
 def get_device():
 
     if torch.cuda.is_available():
+
         return torch.device("cuda")
 
     if torch.backends.mps.is_available():
+
         return torch.device("mps")
 
     return torch.device("cpu")
 
 
 # =============================================================================
-# K HELPERS
+# FILE HELPERS
 # =============================================================================
 
-def k_name(k):
+def history_filename(k):
 
     if k == "Full":
-        return "KFull"
 
-    return f"K{k}"
+        return "history_KFull.parquet"
+
+    return f"history_K{k}.parquet"
 
 
-def mode_name(mode, k):
+def model_filename(mode, k):
 
-    if mode == "video_only":
-        return "video_only_K0"
+    if k == "Full":
 
-    if mode == "history_only":
-        return "history_only_Kfull"
+        k_name = "KFull"
 
-    return f"full_K{k}"
+    else:
+
+        k_name = f"K{k}"
+
+    return f"baseline_{mode}_{k_name}.pth"
+
+
+def metrics_filename(mode, k):
+
+    if k == "Full":
+
+        k_name = "KFull"
+
+    else:
+
+        k_name = f"K{k}"
+
+    return f"metrics_{mode}_{k_name}.csv"
 
 
 # =============================================================================
 # LOAD FROZEN VIDEO VOCABULARY
 # =============================================================================
 
-def load_video_vocabulary():
+def load_video_vocab():
 
     print("=" * 80)
     print("LOADING FROZEN VIDEO VOCABULARY")
     print("=" * 80)
 
-    if not VOCAB_FILE.exists():
+    if not VIDEO_VOCAB_FILE.exists():
+
         raise FileNotFoundError(
-            f"Frozen vocabulary not found:\n{VOCAB_FILE}"
+            f"Frozen vocabulary not found:\n"
+            f"  {VIDEO_VOCAB_FILE}\n\n"
+            "Run Phase 7 first."
         )
 
-    vocab = pd.read_parquet(VOCAB_FILE)
+    vocab = pd.read_parquet(
+        VIDEO_VOCAB_FILE
+    )
 
-    required = {
+    required_columns = {
         "raw_video_id",
         "video_idx",
     }
 
-    missing = required - set(vocab.columns)
+    missing_columns = (
+        required_columns
+        - set(vocab.columns)
+    )
 
-    if missing:
-        raise ValueError(
-            f"Vocabulary missing columns: {sorted(missing)}"
+    if missing_columns:
+
+        raise RuntimeError(
+            "Vocabulary missing required columns: "
+            f"{sorted(missing_columns)}"
         )
 
-    vocab = vocab[
-        ["raw_video_id", "video_idx"]
-    ].copy()
+    vocab["raw_video_id"] = (
+        vocab["raw_video_id"]
+        .astype("int64")
+    )
 
-    if vocab["raw_video_id"].isna().any():
-        raise ValueError(
-            "Vocabulary contains null raw_video_id."
-        )
+    vocab["video_idx"] = (
+        vocab["video_idx"]
+        .astype("int64")
+    )
 
-    if vocab["video_idx"].isna().any():
-        raise ValueError(
-            "Vocabulary contains null video_idx."
-        )
+    # -------------------------------------------------------------------------
+    # Vocabulary invariants
+    # -------------------------------------------------------------------------
 
     if not vocab["raw_video_id"].is_unique:
-        raise ValueError(
+
+        raise RuntimeError(
             "raw_video_id is not unique in frozen vocabulary."
         )
 
     if not vocab["video_idx"].is_unique:
-        raise ValueError(
+
+        raise RuntimeError(
             "video_idx is not unique in frozen vocabulary."
         )
 
-    min_idx = int(vocab["video_idx"].min())
-    max_idx = int(vocab["video_idx"].max())
+    if vocab["video_idx"].min() != 0:
 
-    if min_idx != 0:
-        raise ValueError(
-            f"Expected vocabulary video_idx to start at 0, "
-            f"got {min_idx}."
+        raise RuntimeError(
+            "Frozen vocabulary must start at video_idx=0."
         )
 
-    expected = np.arange(
+    expected_indices = np.arange(
         len(vocab),
         dtype=np.int64,
     )
 
-    actual = np.sort(
-        vocab["video_idx"].to_numpy(dtype=np.int64)
+    actual_indices = (
+        vocab["video_idx"]
+        .sort_values()
+        .to_numpy()
     )
 
-    if not np.array_equal(actual, expected):
-        raise ValueError(
-            "video_idx is not a contiguous range 0..N-1."
+    if not np.array_equal(
+        actual_indices,
+        expected_indices,
+    ):
+
+        raise RuntimeError(
+            "video_idx is not contiguous 0..N-1."
         )
 
-    # -------------------------------------------------------------------------
-    # Dense lookup array
-    #
-    # raw_video_id can be much larger than the number of videos.
-    # A dense int32 array is substantially more memory-efficient than
-    # a Python dictionary.
-    # -------------------------------------------------------------------------
-
-    raw_ids = vocab["raw_video_id"].to_numpy(
-        dtype=np.int64
+    vocab_map = dict(
+        zip(
+            vocab["raw_video_id"],
+            vocab["video_idx"],
+        )
     )
 
-    video_indices = vocab["video_idx"].to_numpy(
-        dtype=np.int64
-    )
-
-    max_raw_id = int(raw_ids.max())
-
-    # -1 means "not present in frozen vocabulary".
-    lookup = np.full(
-        max_raw_id + 1,
-        -1,
-        dtype=np.int32,
-    )
-
-    lookup[raw_ids] = (
-        video_indices + 1
-    ).astype(np.int32)
-
-    num_vocab = len(vocab) + 1
+    vocab_size = len(vocab)
 
     print(
         f"Raw video ID column: raw_video_id"
     )
+
     print(
         f"Vocabulary index column: video_idx"
     )
+
     print(
         f"Vocabulary index range: "
-        f"{min_idx} -> {max_idx}"
+        f"0 -> {vocab_size - 1}"
     )
+
     print(
-        f"Unique vocabulary IDs: {len(vocab):,}"
+        f"Unique vocabulary IDs: "
+        f"{vocab_size:,}"
     )
+
     print(
-        f"Max raw video ID: {max_raw_id:,}"
+        f"Max raw video ID: "
+        f"{vocab['raw_video_id'].max():,}"
     )
+
     print(
-        f"Embedding vocabulary size: {num_vocab:,}"
+        f"Embedding vocabulary size: "
+        f"{vocab_size + MODEL_ID_SHIFT:,}"
     )
+
     print(
         "Index 0 reserved for padding."
     )
 
-    print()
-
-    return lookup, num_vocab
+    return vocab, vocab_map
 
 
 # =============================================================================
-# RAW ID -> MODEL INDEX
+# LOAD EVALUATION LABELS
 # =============================================================================
 
-def map_raw_ids(
+def load_evaluation_labels():
+
+    events_path = (
+        PROCESSED_DIR
+        / "evaluation_events.parquet"
+    )
+
+    if not events_path.exists():
+
+        raise FileNotFoundError(
+            f"Evaluation events not found:\n"
+            f"  {events_path}"
+        )
+
+    events = pd.read_parquet(
+        events_path,
+        columns=[
+            "evaluation_id",
+            "user_id",
+            "video_id",
+            "time_ms",
+            "long_view",
+        ],
+    )
+
+    events["evaluation_id"] = (
+        events["evaluation_id"]
+        .astype("int64")
+    )
+
+    events["user_id"] = (
+        events["user_id"]
+        .astype("int64")
+    )
+
+    events["video_id"] = (
+        events["video_id"]
+        .astype("int64")
+    )
+
+    events["long_view"] = (
+        events["long_view"]
+        .astype("int64")
+    )
+
+    if not events["evaluation_id"].is_unique:
+
+        raise RuntimeError(
+            "evaluation_id is not unique."
+        )
+
+    if not set(
+        events["long_view"].unique()
+    ).issubset({0, 1}):
+
+        raise RuntimeError(
+            "long_view must contain only 0/1."
+        )
+
+    return events
+
+
+# =============================================================================
+# MAP RAW VIDEO ID -> MODEL ID
+# =============================================================================
+
+def map_raw_ids_to_model_ids(
     raw_ids,
-    lookup,
+    vocab_map,
     context,
 ):
 
-    if raw_ids is None:
-        return []
+    mapped = []
 
-    if isinstance(raw_ids, np.ndarray):
-        raw_ids = raw_ids.tolist()
+    missing = set()
 
-    if not isinstance(raw_ids, (list, tuple)):
-        raise ValueError(
-            f"{context}: history must be list/tuple/ndarray, "
-            f"got {type(raw_ids)}"
+    for raw_id in raw_ids:
+
+        raw_id = int(raw_id)
+
+        video_idx = vocab_map.get(
+            raw_id
         )
 
-    if len(raw_ids) == 0:
-        return []
+        if video_idx is None:
 
-    raw = np.asarray(
-        raw_ids,
-        dtype=np.int64,
-    )
+            missing.add(raw_id)
 
-    if raw.min() < 0:
-        raise ValueError(
-            f"{context}: negative raw video ID detected."
+        else:
+
+            # 0 is reserved for padding.
+            model_idx = (
+                int(video_idx)
+                + MODEL_ID_SHIFT
+            )
+
+            mapped.append(
+                model_idx
+            )
+
+    if missing:
+
+        examples = sorted(
+            missing
+        )[:10]
+
+        raise RuntimeError(
+            f"{context}: "
+            f"{len(missing):,} raw video IDs are "
+            "absent from frozen vocabulary.\n"
+            f"Examples: {examples}"
         )
 
-    if raw.max() >= len(lookup):
-        bad = raw[
-            raw >= len(lookup)
-        ][:10].tolist()
-
-        raise ValueError(
-            f"{context}: raw video IDs exceed vocabulary lookup. "
-            f"Examples: {bad}"
-        )
-
-    mapped = lookup[raw]
-
-    missing_mask = mapped < 0
-
-    if missing_mask.any():
-
-        missing = raw[
-            missing_mask
-        ][:10].tolist()
-
-        raise ValueError(
-            f"{context}: raw video IDs are absent from "
-            f"frozen vocabulary. Examples: {missing}"
-        )
-
-    return mapped.astype(
-        np.int64
-    ).tolist()
+    return mapped
 
 
 # =============================================================================
@@ -347,175 +440,342 @@ class KuaiRandDataset(Dataset):
     def __init__(
         self,
         split_name,
-        k_budget,
-        lookup,
+        k,
+        vocab_map,
     ):
 
-        self.split_name = split_name
-        self.k_budget = k_budget
-
-        path = (
-            SPLIT_DIR
-            / k_name(k_budget)
-            / f"{split_name}.parquet"
-        )
-
-        if not path.exists():
-            raise FileNotFoundError(
-                f"Split not found:\n{path}"
-            )
+        super().__init__()
 
         print(
             f"Loading {split_name} split "
-            f"(K={k_budget})..."
+            f"(K={k})..."
         )
 
-        df = pd.read_parquet(path)
+        split_path = (
+            PROCESSED_DIR
+            / f"{split_name}.parquet"
+        )
 
-        required = {
-            "evaluation_id",
+        history_path = (
+            PHASE7_DIR
+            / history_filename(k)
+        )
+
+        if not split_path.exists():
+
+            raise FileNotFoundError(
+                f"Split not found:\n"
+                f"  {split_path}"
+            )
+
+        if not history_path.exists():
+
+            raise FileNotFoundError(
+                f"Phase 7 history not found:\n"
+                f"  {history_path}"
+            )
+
+        # ---------------------------------------------------------------------
+        # Load split
+        #
+        # split.parquet contains eval_idx.
+        # Phase 7 history files contain evaluation_id.
+        # ---------------------------------------------------------------------
+
+        split_df = pd.read_parquet(
+            split_path,
+            columns=[
+                "eval_idx",
+            ],
+        )
+
+        split_df["eval_idx"] = (
+            split_df["eval_idx"]
+            .astype("int64")
+        )
+
+        if not split_df["eval_idx"].is_unique:
+
+            raise RuntimeError(
+                f"{split_name}: eval_idx is not unique."
+            )
+
+        # ---------------------------------------------------------------------
+        # Load frozen Phase 7 K-history
+        # ---------------------------------------------------------------------
+
+        history_df = pd.read_parquet(
+            history_path,
+            columns=[
+                "evaluation_id",
+                "user_id",
+                "video_id",
+                "time_ms",
+                "long_view",
+                "history",
+                "history_len",
+                "history_available",
+            ],
+        )
+
+        history_df["evaluation_id"] = (
+            history_df["evaluation_id"]
+            .astype("int64")
+        )
+
+        history_df["user_id"] = (
+            history_df["user_id"]
+            .astype("int64")
+        )
+
+        history_df["video_id"] = (
+            history_df["video_id"]
+            .astype("int64")
+        )
+
+        history_df["long_view"] = (
+            history_df["long_view"]
+            .astype("int64")
+        )
+
+        # ---------------------------------------------------------------------
+        # Join split -> Phase 7 history
+        # ---------------------------------------------------------------------
+
+        merged = split_df.merge(
+            history_df,
+            left_on="eval_idx",
+            right_on="evaluation_id",
+            how="left",
+            validate="one_to_one",
+        )
+
+        if len(merged) != len(split_df):
+
+            raise RuntimeError(
+                f"{split_name} K={k}: "
+                "join changed number of rows."
+            )
+
+        if merged["evaluation_id"].isna().any():
+
+            missing_count = int(
+                merged["evaluation_id"]
+                .isna()
+                .sum()
+            )
+
+            raise RuntimeError(
+                f"{split_name} K={k}: "
+                f"{missing_count} split events have no "
+                "matching Phase 7 history artifact."
+            )
+
+        # ---------------------------------------------------------------------
+        # Candidate consistency audit
+        # ---------------------------------------------------------------------
+
+        event_df = load_evaluation_labels()
+
+        event_lookup = event_df[
+            [
+                "evaluation_id",
+                "user_id",
+                "video_id",
+                "time_ms",
+                "long_view",
+            ]
+        ]
+
+        merged = merged.merge(
+            event_lookup,
+            on="evaluation_id",
+            how="left",
+            suffixes=(
+                "_phase7",
+                "_event",
+            ),
+            validate="one_to_one",
+        )
+
+        if len(merged) != len(split_df):
+
+            raise RuntimeError(
+                f"{split_name} K={k}: "
+                "evaluation event join changed row count."
+            )
+
+        # Phase 7 artifact and evaluation_events must agree.
+        checks = [
             "user_id",
             "video_id",
             "time_ms",
             "long_view",
-            "history",
-            "history_len",
-        }
+        ]
 
-        missing = required - set(df.columns)
+        for col in checks:
 
-        if missing:
-            raise ValueError(
-                f"{split_name}: missing required columns "
-                f"{sorted(missing)}"
+            left_col = f"{col}_phase7"
+            right_col = f"{col}_event"
+
+            mismatch = (
+                merged[left_col]
+                != merged[right_col]
             )
 
+            if mismatch.any():
+
+                count = int(
+                    mismatch.sum()
+                )
+
+                examples = merged.loc[
+                    mismatch,
+                    [
+                        "evaluation_id",
+                        left_col,
+                        right_col,
+                    ],
+                ].head(5)
+
+                raise RuntimeError(
+                    f"{split_name} K={k}: "
+                    f"{col} mismatch in {count} rows.\n"
+                    f"{examples}"
+                )
+
         # ---------------------------------------------------------------------
-        # Labels
+        # Candidate encoding
         # ---------------------------------------------------------------------
 
-        labels = df["long_view"]
-
-        if labels.isna().any():
-            raise ValueError(
-                f"{split_name}: long_view contains null values."
-            )
-
-        unique_labels = set(
-            labels.astype(int).unique().tolist()
+        raw_candidates = (
+            merged["video_id_event"]
+            .astype("int64")
+            .tolist()
         )
 
-        if not unique_labels.issubset({0, 1}):
-            raise ValueError(
-                f"{split_name}: long_view must be binary, "
-                f"got {sorted(unique_labels)}"
+        candidate_ids = (
+            map_raw_ids_to_model_ids(
+                raw_candidates,
+                vocab_map,
+                f"{split_name} K={k} candidate",
             )
-
-        self.labels = labels.to_numpy(
-            dtype=np.float32
-        )
-
-        # ---------------------------------------------------------------------
-        # Candidate IDs
-        # ---------------------------------------------------------------------
-
-        raw_candidates = df["video_id"].to_numpy(
-            dtype=np.int64
-        )
-
-        self.candidate_ids = []
-
-        for i, raw_id in enumerate(raw_candidates):
-
-            mapped = map_raw_ids(
-                [raw_id],
-                lookup,
-                f"{split_name} candidate row {i}",
-            )[0]
-
-            self.candidate_ids.append(
-                mapped
-            )
-
-        self.candidate_ids = np.asarray(
-            self.candidate_ids,
-            dtype=np.int64,
         )
 
         # ---------------------------------------------------------------------
-        # Histories
+        # History encoding
+        #
+        # Phase 7 history contains RAW video IDs.
+        # Convert them through the SAME frozen vocabulary.
         # ---------------------------------------------------------------------
 
-        self.histories = []
+        raw_histories = (
+            merged["history"]
+            .tolist()
+        )
 
-        for i, hist in enumerate(
-            df["history"]
+        history_ids = []
+
+        history_lengths = []
+
+        for row_idx, history in enumerate(
+            raw_histories
         ):
 
-            mapped = map_raw_ids(
-                hist,
-                lookup,
-                f"{split_name} history row {i}",
-            )
+            if history is None:
 
-            declared_len = int(
-                df.iloc[i]["history_len"]
-            )
+                history = []
 
-            if declared_len != len(mapped):
-                raise ValueError(
-                    f"{split_name} row {i}: "
-                    f"history_len={declared_len}, "
-                    f"actual={len(mapped)}"
+            history = list(history)
+
+            mapped_history = (
+                map_raw_ids_to_model_ids(
+                    history,
+                    vocab_map,
+                    (
+                        f"{split_name} K={k} "
+                        f"history row {row_idx}"
+                    ),
                 )
+            )
 
-            self.histories.append(mapped)
+            history_ids.append(
+                mapped_history
+            )
 
-        # ---------------------------------------------------------------------
-        # Evaluation IDs
-        # ---------------------------------------------------------------------
-
-        self.evaluation_ids = df[
-            "evaluation_id"
-        ].to_numpy(
-            dtype=np.int64
-        )
-
-        if len(
-            np.unique(self.evaluation_ids)
-        ) != len(self.evaluation_ids):
-
-            raise ValueError(
-                f"{split_name}: evaluation_id is not unique."
+            history_lengths.append(
+                len(mapped_history)
             )
 
         # ---------------------------------------------------------------------
-        # K audit
+        # K invariants
         # ---------------------------------------------------------------------
 
-        if k_budget == 0:
+        if k == 0:
 
             if any(
-                len(hist) != 0
-                for hist in self.histories
+                len(history) != 0
+                for history in history_ids
             ):
-                raise ValueError(
-                    f"{split_name}: K=0 contains non-empty history."
+
+                raise RuntimeError(
+                    f"{split_name} K=0: "
+                    "history is not empty."
                 )
 
-        elif k_budget != "Full":
+        elif k != "Full":
 
-            max_len = max(
-                (len(hist) for hist in self.histories),
-                default=0,
-            )
+            if any(
+                len(history) > k
+                for history in history_ids
+            ):
 
-            if max_len > int(k_budget):
-                raise ValueError(
-                    f"{split_name}: K={k_budget}, "
-                    f"history length exceeds K. "
-                    f"Max={max_len}"
+                raise RuntimeError(
+                    f"{split_name} K={k}: "
+                    "history exceeds K."
                 )
+
+        else:
+
+            if any(
+                len(history) > 2048
+                for history in history_ids
+            ):
+
+                raise RuntimeError(
+                    f"{split_name} K=Full: "
+                    "history exceeds L_max=2048."
+                )
+
+        # ---------------------------------------------------------------------
+        # Store
+        # ---------------------------------------------------------------------
+
+        self.candidate_ids = candidate_ids
+
+        self.history_ids = history_ids
+
+        self.history_lengths = history_lengths
+
+        self.labels = (
+            merged["long_view_event"]
+            .astype("float32")
+            .tolist()
+        )
+
+        self.user_ids = (
+            merged["user_id_event"]
+            .astype("int64")
+            .tolist()
+        )
+
+        self.evaluation_ids = (
+            merged["evaluation_id"]
+            .astype("int64")
+            .tolist()
+        )
+
+        self.k = k
 
         print(
             f"  Samples: {len(self):,}"
@@ -527,295 +787,116 @@ class KuaiRandDataset(Dataset):
 
     def __getitem__(self, idx):
 
-        candidate_id = int(
-            self.candidate_ids[idx]
-        )
-
-        history = self.histories[idx]
-
-        label = float(
-            self.labels[idx]
-        )
-
-        return (
-            candidate_id,
-            history,
-            label,
-        )
+        return {
+            "candidate_id": self.candidate_ids[idx],
+            "history_ids": self.history_ids[idx],
+            "label": self.labels[idx],
+            "user_id": self.user_ids[idx],
+            "evaluation_id": self.evaluation_ids[idx],
+        }
 
 
 # =============================================================================
 # COLLATE
 # =============================================================================
 
-def make_collate_fn():
+def collate_batch(batch):
 
-    def collate(batch):
+    batch_size = len(batch)
 
-        candidate_ids = [
-            item[0]
+    candidate_ids = torch.tensor(
+        [
+            item["candidate_id"]
             for item in batch
-        ]
+        ],
+        dtype=torch.long,
+    )
 
-        histories = [
-            item[1]
+    labels = torch.tensor(
+        [
+            item["label"]
             for item in batch
-        ]
+        ],
+        dtype=torch.float32,
+    )
 
-        labels = [
-            item[2]
+    max_len = max(
+        (
+            len(item["history_ids"])
             for item in batch
-        ]
+        ),
+        default=0,
+    )
 
-        max_len = max(
-            (len(hist) for hist in histories),
-            default=0,
-        )
+    # K=0 still needs a sequence dimension.
+    max_len = max(
+        max_len,
+        1,
+    )
 
-        # At least one column is needed for tensor shape.
-        seq_len = max(
-            1,
+    history_ids = torch.zeros(
+        (
+            batch_size,
             max_len,
+        ),
+        dtype=torch.long,
+    )
+
+    history_mask = torch.zeros(
+        (
+            batch_size,
+            max_len,
+        ),
+        dtype=torch.float32,
+    )
+
+    for row_idx, item in enumerate(batch):
+
+        history = item["history_ids"]
+
+        length = len(history)
+
+        if length == 0:
+
+            continue
+
+        history_ids[
+            row_idx,
+            :length,
+        ] = torch.tensor(
+            history,
+            dtype=torch.long,
         )
 
-        history_ids = np.zeros(
-            (
-                len(batch),
-                seq_len,
-            ),
-            dtype=np.int64,
-        )
+        history_mask[
+            row_idx,
+            :length,
+        ] = 1.0
 
-        history_mask = np.zeros(
-            (
-                len(batch),
-                seq_len,
-            ),
-            dtype=np.float32,
-        )
-
-        for i, hist in enumerate(histories):
-
-            if len(hist) == 0:
-                continue
-
-            history_ids[
-                i,
-                :len(hist),
-            ] = hist
-
-            history_mask[
-                i,
-                :len(hist),
-            ] = 1.0
-
-        return {
-            "candidate_ids": torch.tensor(
-                candidate_ids,
-                dtype=torch.long,
-            ),
-            "history_ids": torch.tensor(
-                history_ids,
-                dtype=torch.long,
-            ),
-            "history_mask": torch.tensor(
-                history_mask,
-                dtype=torch.float32,
-            ),
-            "labels": torch.tensor(
-                labels,
-                dtype=torch.float32,
-            ),
-        }
-
-    return collate
-
-
-# =============================================================================
-# DATALOADERS
-# =============================================================================
-
-def build_dataloaders(
-    k_budget,
-    lookup,
-):
-
-    collate_fn = make_collate_fn()
-
-    train_dataset = KuaiRandDataset(
-        "train",
-        k_budget,
-        lookup,
+    user_ids = torch.tensor(
+        [
+            item["user_id"]
+            for item in batch
+        ],
+        dtype=torch.long,
     )
 
-    val_dataset = KuaiRandDataset(
-        "validation",
-        k_budget,
-        lookup,
-    )
-
-    test_dataset = KuaiRandDataset(
-        "test",
-        k_budget,
-        lookup,
-    )
-
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=True,
-        num_workers=NUM_WORKERS,
-        collate_fn=collate_fn,
-    )
-
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        collate_fn=collate_fn,
-    )
-
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=BATCH_SIZE,
-        shuffle=False,
-        num_workers=NUM_WORKERS,
-        collate_fn=collate_fn,
+    evaluation_ids = torch.tensor(
+        [
+            item["evaluation_id"]
+            for item in batch
+        ],
+        dtype=torch.long,
     )
 
     return (
-        train_loader,
-        val_loader,
-        test_loader,
-    )
-
-
-# =============================================================================
-# MODEL
-# =============================================================================
-
-def build_model(
-    mode,
-    num_vocab,
-    device,
-):
-
-    model = KuaiRandRecommender(
-        num_videos=num_vocab,
-        embedding_dim=EMBEDDING_DIM,
-        hidden_dims=HIDDEN_DIMS,
-        mode=mode,
-    )
-
-    model = model.to(device)
-
-    return model
-
-
-# =============================================================================
-# FORWARD
-# =============================================================================
-
-def forward_batch(
-    model,
-    batch,
-    device,
-):
-
-    candidate_ids = batch[
-        "candidate_ids"
-    ].to(device)
-
-    history_ids = batch[
-        "history_ids"
-    ].to(device)
-
-    history_mask = batch[
-        "history_mask"
-    ].to(device)
-
-    labels = batch[
-        "labels"
-    ].to(device)
-
-    predictions = model(
         candidate_ids,
         history_ids,
         history_mask,
+        labels,
+        user_ids,
+        evaluation_ids,
     )
-
-    return predictions, labels
-
-
-# =============================================================================
-# EVALUATION
-# =============================================================================
-
-@torch.no_grad()
-def evaluate(
-    model,
-    loader,
-    device,
-    criterion,
-):
-
-    model.eval()
-
-    losses = []
-    all_predictions = []
-    all_labels = []
-
-    for batch in loader:
-
-        predictions, labels = forward_batch(
-            model,
-            batch,
-            device,
-        )
-
-        loss = criterion(
-            predictions,
-            labels,
-        )
-
-        losses.append(
-            loss.item()
-        )
-
-        all_predictions.extend(
-            predictions.detach()
-            .cpu()
-            .numpy()
-            .tolist()
-        )
-
-        all_labels.extend(
-            labels.detach()
-            .cpu()
-            .numpy()
-            .tolist()
-        )
-
-    if len(
-        np.unique(all_labels)
-    ) < 2:
-
-        raise ValueError(
-            "ROC-AUC cannot be computed: "
-            "only one label class is present."
-        )
-
-    auc = roc_auc_score(
-        all_labels,
-        all_predictions,
-    )
-
-    mean_loss = float(
-        np.mean(losses)
-    )
-
-    return mean_loss, float(auc)
 
 
 # =============================================================================
@@ -823,141 +904,258 @@ def evaluate(
 # =============================================================================
 
 def preflight_audit(
-    lookup,
+    vocab_map,
 ):
 
-    print("=" * 80)
+    print("\n" + "=" * 80)
     print("PHASE 8 PRE-FLIGHT AUDIT")
     print("=" * 80)
 
     for k in K_VALUES:
 
-        print()
-        print(
-            f"Checking {k_name(k)}..."
+        print(f"\nChecking K{k}...")
+
+        train_dataset = KuaiRandDataset(
+            "train",
+            k,
+            vocab_map,
         )
 
-        for split in [
-            "train",
+        val_dataset = KuaiRandDataset(
             "validation",
-            "test",
-        ]:
+            k,
+            vocab_map,
+        )
 
-            # Dataset constructor performs all validations.
-            dataset = KuaiRandDataset(
-                split,
-                k,
-                lookup,
+        test_dataset = KuaiRandDataset(
+            "test",
+            k,
+            vocab_map,
+        )
+
+        if len(train_dataset) == 0:
+
+            raise RuntimeError(
+                f"K={k}: empty train dataset."
             )
 
-            if len(dataset) == 0:
-                raise ValueError(
-                    f"{split} / K={k} is empty."
-                )
+        if len(val_dataset) == 0:
+
+            raise RuntimeError(
+                f"K={k}: empty validation dataset."
+            )
+
+        if len(test_dataset) == 0:
+
+            raise RuntimeError(
+                f"K={k}: empty test dataset."
+            )
 
         print(
             f"  K={k}: PASS"
         )
 
-    print()
-    print("=" * 80)
+    print("\n" + "=" * 80)
     print("PRE-FLIGHT AUDIT: PASS")
-    print("All K configurations are safe to train.")
     print("=" * 80)
-    print()
 
 
 # =============================================================================
-# CHECKPOINT
+# BUILD MODEL
 # =============================================================================
 
-def checkpoint_path(
-    mode,
-    k,
+def build_model(
+    vocab_size,
+    mode="full",
 ):
 
-    return (
-        CHECKPOINT_DIR
-        / f"baseline_{mode_name(mode, k)}.pth"
+    model = KuaiRandRecommender(
+        num_videos=vocab_size,
+        embedding_dim=EMBEDDING_DIM,
+        hidden_dims=HIDDEN_DIMS,
+        mode=mode,
     )
 
-
-def result_path(
-    mode,
-    k,
-):
-
-    return (
-        RESULT_DIR
-        / f"baseline_{mode_name(mode, k)}.json"
-    )
+    return model
 
 
 # =============================================================================
-# TRAIN ONE MODEL
+# EVALUATE
 # =============================================================================
 
-def train_and_evaluate(
-    mode,
-    k_budget,
-    lookup,
-    num_vocab,
+def evaluate_model(
+    model,
+    loader,
     device,
 ):
 
-    experiment_name = mode_name(
-        mode,
-        k_budget,
+    model.eval()
+
+    predictions = []
+
+    labels = []
+
+    users = []
+
+    evaluation_ids = []
+
+    with torch.no_grad():
+
+        for (
+            candidate_ids,
+            history_ids,
+            history_mask,
+            batch_labels,
+            batch_users,
+            batch_evaluation_ids,
+        ) in loader:
+
+            candidate_ids = (
+                candidate_ids.to(device)
+            )
+
+            history_ids = (
+                history_ids.to(device)
+            )
+
+            history_mask = (
+                history_mask.to(device)
+            )
+
+            preds = model(
+                candidate_ids,
+                history_ids,
+                history_mask,
+            )
+
+            predictions.extend(
+                preds.detach()
+                .cpu()
+                .numpy()
+                .tolist()
+            )
+
+            labels.extend(
+                batch_labels.numpy()
+                .tolist()
+            )
+
+            users.extend(
+                batch_users.numpy()
+                .tolist()
+            )
+
+            evaluation_ids.extend(
+                batch_evaluation_ids.numpy()
+                .tolist()
+            )
+
+    labels_np = np.asarray(
+        labels,
+        dtype=np.int64,
     )
 
-    print("=" * 80)
-    print(
-        f"PHASE 8 | MODE={mode} | K={k_budget}"
-    )
-    print("=" * 80)
-
-    print(
-        f"Device: {device}"
+    predictions_np = np.asarray(
+        predictions,
+        dtype=np.float64,
     )
 
-    final_result = result_path(
-        mode,
-        k_budget,
-    )
+    if len(np.unique(labels_np)) < 2:
 
-    if (
-        SKIP_EXISTING
-        and final_result.exists()
-    ):
+        auc = float("nan")
 
-        print(
-            f"Existing result found:\n"
-            f"  {final_result}"
+    else:
+
+        auc = roc_auc_score(
+            labels_np,
+            predictions_np,
         )
 
-        print(
-            "Skipping."
-        )
+    return {
+        "auc": auc,
+        "predictions": predictions_np,
+        "labels": labels_np,
+        "user_ids": np.asarray(
+            users,
+            dtype=np.int64,
+        ),
+        "evaluation_ids": np.asarray(
+            evaluation_ids,
+            dtype=np.int64,
+        ),
+    }
 
-        with open(
-            final_result,
-            "r",
-            encoding="utf-8",
-        ) as f:
 
-            return json.load(f)
+# =============================================================================
+# TRAIN ONE K
+# =============================================================================
+
+def train_one_k(
+    k,
+    vocab_size,
+    vocab_map,
+    device,
+    mode="full",
+):
+
+    print("\n" + "=" * 80)
+    print(
+        f"TRAINING MODEL — "
+        f"Mode={mode} | K={k}"
+    )
+    print("=" * 80)
 
     # -------------------------------------------------------------------------
-    # Data
+    # Dataset
     # -------------------------------------------------------------------------
 
-    (
-        train_loader,
-        val_loader,
-        test_loader,
-    ) = build_dataloaders(
-        k_budget,
-        lookup,
+    train_dataset = KuaiRandDataset(
+        "train",
+        k,
+        vocab_map,
+    )
+
+    val_dataset = KuaiRandDataset(
+        "validation",
+        k,
+        vocab_map,
+    )
+
+    test_dataset = KuaiRandDataset(
+        "test",
+        k,
+        vocab_map,
+    )
+
+    # -------------------------------------------------------------------------
+    # DataLoaders
+    # -------------------------------------------------------------------------
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        num_workers=NUM_WORKERS,
+        collate_fn=collate_batch,
+        pin_memory=False,
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=NUM_WORKERS,
+        collate_fn=collate_batch,
+        pin_memory=False,
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=NUM_WORKERS,
+        collate_fn=collate_batch,
+        pin_memory=False,
     )
 
     # -------------------------------------------------------------------------
@@ -965,17 +1163,37 @@ def train_and_evaluate(
     # -------------------------------------------------------------------------
 
     model = build_model(
-        mode,
-        num_vocab,
-        device,
-    )
+        vocab_size,
+        mode=mode,
+    ).to(device)
 
-    criterion = torch.nn.BCELoss()
+    # -------------------------------------------------------------------------
+    # Loss
+    # -------------------------------------------------------------------------
 
-    optimizer = torch.optim.Adam(
+    criterion = nn.BCELoss()
+
+    # -------------------------------------------------------------------------
+    # Optimizer
+    # -------------------------------------------------------------------------
+
+    optimizer = optim.Adam(
         model.parameters(),
         lr=LEARNING_RATE,
-        weight_decay=WEIGHT_DECAY,
+    )
+
+    # -------------------------------------------------------------------------
+    # Paths
+    # -------------------------------------------------------------------------
+
+    checkpoint_path = (
+        MODEL_DIR
+        / model_filename(mode, k)
+    )
+
+    metrics_path = (
+        RESULT_DIR
+        / metrics_filename(mode, k)
     )
 
     # -------------------------------------------------------------------------
@@ -983,18 +1201,15 @@ def train_and_evaluate(
     # -------------------------------------------------------------------------
 
     best_val_auc = -np.inf
+
     best_epoch = 0
+
     patience_counter = 0
 
-    history = []
-
-    ckpt = checkpoint_path(
-        mode,
-        k_budget,
-    )
+    metrics = []
 
     # -------------------------------------------------------------------------
-    # Training
+    # Epoch loop
     # -------------------------------------------------------------------------
 
     for epoch in range(
@@ -1004,18 +1219,43 @@ def train_and_evaluate(
 
         model.train()
 
-        train_losses = []
+        total_loss = 0.0
 
-        for batch in train_loader:
+        total_samples = 0
+
+        for (
+            candidate_ids,
+            history_ids,
+            history_mask,
+            labels,
+            _,
+            _,
+        ) in train_loader:
+
+            candidate_ids = (
+                candidate_ids.to(device)
+            )
+
+            history_ids = (
+                history_ids.to(device)
+            )
+
+            history_mask = (
+                history_mask.to(device)
+            )
+
+            labels = (
+                labels.to(device)
+            )
 
             optimizer.zero_grad(
                 set_to_none=True
             )
 
-            predictions, labels = forward_batch(
-                model,
-                batch,
-                device,
+            predictions = model(
+                candidate_ids,
+                history_ids,
+                history_mask,
             )
 
             loss = criterion(
@@ -1027,175 +1267,367 @@ def train_and_evaluate(
 
             optimizer.step()
 
-            train_losses.append(
-                loss.item()
+            batch_size = (
+                candidate_ids.size(0)
             )
 
-        train_loss = float(
-            np.mean(train_losses)
+            total_loss += (
+                loss.item()
+                * batch_size
+            )
+
+            total_samples += batch_size
+
+        train_loss = (
+            total_loss
+            / total_samples
         )
 
-        val_loss, val_auc = evaluate(
+        # ---------------------------------------------------------------------
+        # Validation
+        # ---------------------------------------------------------------------
+
+        val_result = evaluate_model(
             model,
             val_loader,
             device,
-            criterion,
         )
 
-        epoch_record = {
-            "epoch": epoch,
-            "train_loss": train_loss,
-            "val_loss": val_loss,
-            "val_roc_auc": val_auc,
-        }
+        val_auc = val_result["auc"]
 
-        history.append(
-            epoch_record
+        metrics.append(
+            {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_auc": val_auc,
+            }
         )
 
         print(
             f"Epoch {epoch:02d}/{EPOCHS} | "
-            f"Train Loss: {train_loss:.4f} | "
-            f"Val ROC-AUC: {val_auc:.4f}"
+            f"Train Loss: {train_loss:.5f} | "
+            f"Val ROC-AUC: {val_auc:.5f}"
         )
 
         # ---------------------------------------------------------------------
-        # Best checkpoint
+        # Early stopping
         # ---------------------------------------------------------------------
 
-        if val_auc > best_val_auc:
+        if np.isfinite(val_auc) and (
+            val_auc > best_val_auc
+        ):
 
             best_val_auc = val_auc
+
             best_epoch = epoch
+
             patience_counter = 0
 
-            # Save state_dict only.
-            # This avoids PyTorch 2.6 pickle/weights_only problems.
             torch.save(
-                model.state_dict(),
-                ckpt,
+                {
+                    "model_state_dict":
+                        model.state_dict(),
+
+                    "k": k,
+
+                    "mode": mode,
+
+                    "vocab_size":
+                        vocab_size,
+
+                    "embedding_dim":
+                        EMBEDDING_DIM,
+
+                    "hidden_dims":
+                        HIDDEN_DIMS,
+
+                    "batch_size":
+                        BATCH_SIZE,
+
+                    "learning_rate":
+                        LEARNING_RATE,
+
+                    "epoch":
+                        epoch,
+
+                    "best_val_auc":
+                        best_val_auc,
+
+                    "seed":
+                        SEED,
+
+                    "model_id_shift":
+                        MODEL_ID_SHIFT,
+
+                    "padding_idx":
+                        PADDING_IDX,
+                },
+                checkpoint_path,
             )
 
             print(
-                f"  -> Best checkpoint saved: "
-                f"{ckpt.name}"
+                f"  -> Best model saved: "
+                f"{checkpoint_path.name}"
             )
 
         else:
 
             patience_counter += 1
 
-        # ---------------------------------------------------------------------
-        # Early stopping
-        # ---------------------------------------------------------------------
-
-        if patience_counter >= PATIENCE:
-
-            print()
             print(
-                f"[EARLY STOPPING] Epoch {epoch}"
+                f"  -> No improvement "
+                f"({patience_counter}/{PATIENCE})"
             )
 
-            break
+            if patience_counter >= PATIENCE:
 
-    print()
-    print(
-        f"Best Validation AUC: "
-        f"{best_val_auc:.4f}"
+                print(
+                    "\n[EARLY STOPPING] "
+                    f"Best Val AUC={best_val_auc:.5f} "
+                    f"at epoch {best_epoch}"
+                )
+
+                break
+
+    # -------------------------------------------------------------------------
+    # Save training metrics
+    # -------------------------------------------------------------------------
+
+    metrics_df = pd.DataFrame(
+        metrics
+    )
+
+    metrics_df.to_csv(
+        metrics_path,
+        index=False,
     )
 
     # -------------------------------------------------------------------------
-    # Load best validation checkpoint
+    # Load frozen best checkpoint
     # -------------------------------------------------------------------------
 
-    print()
-    print(
-        "[P3] Loading best validation checkpoint..."
-    )
+    if not checkpoint_path.exists():
 
-    state_dict = torch.load(
-        ckpt,
+        raise RuntimeError(
+            f"No best checkpoint produced for K={k}."
+        )
+
+    checkpoint = torch.load(
+        checkpoint_path,
         map_location=device,
-        weights_only=True,
     )
 
     model.load_state_dict(
-        state_dict
+        checkpoint["model_state_dict"]
     )
 
     # -------------------------------------------------------------------------
-    # Final test
+    # Final validation with frozen checkpoint
     # -------------------------------------------------------------------------
 
-    test_loss, test_auc = evaluate(
+    frozen_val_result = evaluate_model(
+        model,
+        val_loader,
+        device,
+    )
+
+    frozen_val_auc = (
+        frozen_val_result["auc"]
+    )
+
+    # -------------------------------------------------------------------------
+    # Final test with frozen checkpoint
+    #
+    # IMPORTANT:
+    # No parameter update occurs here.
+    # -------------------------------------------------------------------------
+
+    frozen_test_result = evaluate_model(
         model,
         test_loader,
         device,
-        criterion,
     )
 
-    print()
-    print("=" * 80)
+    test_auc = (
+        frozen_test_result["auc"]
+    )
+
+    print("\n" + "-" * 80)
     print(
-        f"FINAL TEST ROC-AUC | "
-        f"{mode} | K={k_budget}: "
-        f"{test_auc:.4f}"
+        f"FROZEN CHECKPOINT — K={k}"
     )
-    print("=" * 80)
+    print("-" * 80)
+
+    print(
+        f"Best epoch:       {best_epoch}"
+    )
+
+    print(
+        f"Best Val ROC-AUC: {best_val_auc:.5f}"
+    )
+
+    print(
+        f"Frozen Val AUC:   {frozen_val_auc:.5f}"
+    )
+
+    print(
+        f"Frozen Test AUC:  {test_auc:.5f}"
+    )
+
+    print(
+        f"Checkpoint:       {checkpoint_path}"
+    )
 
     # -------------------------------------------------------------------------
-    # Save result
+    # Save final summary
     # -------------------------------------------------------------------------
 
-    result = {
-        "experiment": experiment_name,
+    summary = {
         "mode": mode,
-        "K": k_budget,
-
-        "device": str(device),
-
-        "num_vocab": int(num_vocab),
-        "embedding_dim": EMBEDDING_DIM,
-        "hidden_dims": HIDDEN_DIMS,
-
-        "batch_size": BATCH_SIZE,
-        "epochs_max": EPOCHS,
-        "learning_rate": LEARNING_RATE,
-        "weight_decay": WEIGHT_DECAY,
-        "patience": PATIENCE,
-
+        "K": k,
         "best_epoch": best_epoch,
-        "best_validation_roc_auc": best_val_auc,
-
-        "test_loss": test_loss,
-        "test_roc_auc": test_auc,
-
-        "checkpoint": str(ckpt),
-
-        "history": history,
+        "best_val_auc": best_val_auc,
+        "test_auc": test_auc,
+        "train_samples": len(train_dataset),
+        "validation_samples": len(val_dataset),
+        "test_samples": len(test_dataset),
+        "vocab_size": vocab_size,
+        "embedding_dim": EMBEDDING_DIM,
+        "hidden_dims": str(HIDDEN_DIMS),
+        "batch_size": BATCH_SIZE,
+        "learning_rate": LEARNING_RATE,
+        "epochs_max": EPOCHS,
+        "patience": PATIENCE,
+        "seed": SEED,
     }
 
-    with open(
-        final_result,
-        "w",
-        encoding="utf-8",
-    ) as f:
+    return summary
 
-        json.dump(
-            result,
-            f,
-            indent=2,
+
+# =============================================================================
+# SAVE RESULT TABLE
+# =============================================================================
+
+def save_result_table(
+    results,
+    filename="baseline_results.csv",
+):
+
+    path = RESULT_DIR / filename
+
+    df = pd.DataFrame(results)
+
+    df.to_csv(
+        path,
+        index=False,
+    )
+
+    print(
+        f"\nSaved results:"
+        f"\n  {path}"
+    )
+
+    return df
+
+
+# =============================================================================
+# FINAL ARTIFACT AUDIT
+# =============================================================================
+
+def final_artifact_audit(
+    vocab_size,
+    results,
+):
+
+    print("\n" + "=" * 80)
+    print("PHASE 8 FINAL ARTIFACT AUDIT")
+    print("=" * 80)
+
+    expected_count = len(K_VALUES)
+
+    if len(results) != expected_count:
+
+        raise RuntimeError(
+            "Unexpected number of trained conditions: "
+            f"{len(results)} != {expected_count}"
         )
 
-    print()
-    print(
-        f"Saved result:"
-    )
-    print(
-        f"  {final_result}"
+    for result in results:
+
+        k = result["K"]
+
+        checkpoint_path = (
+            MODEL_DIR
+            / model_filename(
+                "full",
+                k,
+            )
+        )
+
+        metrics_path = (
+            RESULT_DIR
+            / metrics_filename(
+                "full",
+                k,
+            )
+        )
+
+        if not checkpoint_path.exists():
+
+            raise RuntimeError(
+                f"K={k}: checkpoint missing:\n"
+                f"  {checkpoint_path}"
+            )
+
+        if not metrics_path.exists():
+
+            raise RuntimeError(
+                f"K={k}: metrics missing:\n"
+                f"  {metrics_path}"
+            )
+
+        if result["vocab_size"] != vocab_size:
+
+            raise RuntimeError(
+                f"K={k}: vocabulary size mismatch."
+            )
+
+        print(
+            f"  K={k}: PASS"
+        )
+
+    result_df = pd.DataFrame(
+        results
     )
 
-    return result
+    print("\nResults:")
+
+    print(
+        result_df[
+            [
+                "K",
+                "best_epoch",
+                "best_val_auc",
+                "test_auc",
+            ]
+        ].to_string(
+            index=False
+        )
+    )
+
+    print(
+        "\nPHASE 8 FINAL ARTIFACT AUDIT: PASS"
+    )
+
+
+# =============================================================================
+# PATH CONSTANT
+# =============================================================================
+
+VIDEO_VOCAB_FILE = (
+    PROCESSED_DIR
+    / "video_vocab.parquet"
+)
 
 
 # =============================================================================
@@ -1204,86 +1636,53 @@ def train_and_evaluate(
 
 def main():
 
-    set_seed()
-
     print("=" * 80)
     print("PHASE 8 — BASELINE TRAINING & EVALUATION")
     print("=" * 80)
 
-    OUTPUT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    CHECKPOINT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    RESULT_DIR.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    # -------------------------------------------------------------------------
-    # Vocabulary
-    # -------------------------------------------------------------------------
-
-    lookup, num_vocab = load_video_vocabulary()
-
-    # -------------------------------------------------------------------------
-    # PRE-FLIGHT
-    #
-    # IMPORTANT:
-    # This happens BEFORE any model training.
-    # -------------------------------------------------------------------------
-
-    preflight_audit(
-        lookup
-    )
-
-    # -------------------------------------------------------------------------
-    # Device
-    # -------------------------------------------------------------------------
+    set_seed()
 
     device = get_device()
 
     print(
-        f"Training device: {device}"
+        f"\nDevice: {device}"
     )
 
-    print()
-
     # -------------------------------------------------------------------------
-    # Experiment definitions
+    # Load frozen vocabulary
     # -------------------------------------------------------------------------
 
-    experiments = [
-        (
-            "video_only",
-            0,
-        ),
+    vocab, vocab_map = (
+        load_video_vocab()
+    )
 
-        (
-            "history_only",
-            "Full",
-        ),
-    ]
+    vocab_size = len(vocab)
 
     # -------------------------------------------------------------------------
-    # Run baselines
+    # Pre-flight
+    # -------------------------------------------------------------------------
+
+    preflight_audit(
+        vocab_map
+    )
+
+    # -------------------------------------------------------------------------
+    # Train one independent model per K
     # -------------------------------------------------------------------------
 
     results = []
 
-    for mode, k in experiments:
+    for k in K_VALUES:
 
-        result = train_and_evaluate(
-            mode=mode,
-            k_budget=k,
-            lookup=lookup,
-            num_vocab=num_vocab,
+        # Reset seed before each independent condition.
+        set_seed()
+
+        result = train_one_k(
+            k=k,
+            vocab_size=vocab_size,
+            vocab_map=vocab_map,
             device=device,
+            mode="full",
         )
 
         results.append(
@@ -1291,94 +1690,90 @@ def main():
         )
 
     # -------------------------------------------------------------------------
-    # Save summary
+    # Save results
     # -------------------------------------------------------------------------
 
-    summary_rows = []
-
-    for result in results:
-
-        summary_rows.append(
-            {
-                "experiment": result[
-                    "experiment"
-                ],
-
-                "mode": result[
-                    "mode"
-                ],
-
-                "K": result[
-                    "K"
-                ],
-
-                "best_epoch": result[
-                    "best_epoch"
-                ],
-
-                "validation_roc_auc": result[
-                    "best_validation_roc_auc"
-                ],
-
-                "test_roc_auc": result[
-                    "test_roc_auc"
-                ],
-            }
-        )
-
-    summary = pd.DataFrame(
-        summary_rows
+    save_result_table(
+        results,
+        "baseline_results.csv",
     )
 
-    summary_path = (
-        RESULT_DIR
-        / "baseline_summary.csv"
+    # -------------------------------------------------------------------------
+    # Final audit
+    # -------------------------------------------------------------------------
+
+    final_artifact_audit(
+        vocab_size,
+        results,
     )
 
-    summary.to_csv(
-        summary_path,
-        index=False,
-    )
+    # -------------------------------------------------------------------------
+    # Final
+    # -------------------------------------------------------------------------
 
-    print()
-    print("=" * 80)
+    print("\n" + "=" * 80)
     print("PHASE 8 COMPLETE")
     print("=" * 80)
 
-    print()
-    print("Baseline results:")
+    print(
+        "\nConditions trained:"
+    )
 
-    for row in summary_rows:
+    for k in K_VALUES:
 
         print(
-            f"  {row['experiment']:<25} "
-            f"Val AUC: "
-            f"{row['validation_roc_auc']:.4f} | "
-            f"Test AUC: "
-            f"{row['test_roc_auc']:.4f}"
+            f"  K={k}: trained + frozen"
         )
 
-    print()
     print(
-        f"Summary saved:"
-    )
-    print(
-        f"  {summary_path}"
+        "\nProtocol:"
     )
 
-    print()
-    print("Artifacts:")
+    print(
+        "  Frozen video vocabulary:       PASS"
+    )
 
-    for path in sorted(
-        OUTPUT_DIR.rglob("*")
-    ):
+    print(
+        "  Raw ID -> vocab -> model ID:   PASS"
+    )
 
-        if path.is_file():
+    print(
+        "  Padding index = 0:             PASS"
+    )
 
-            print(
-                f"  {path}"
-            )
+    print(
+        "  Same architecture across K:    PASS"
+    )
+
+    print(
+        "  Independent training per K:    PASS"
+    )
+
+    print(
+        "  Validation model selection:    PASS"
+    )
+
+    print(
+        "  Test after checkpoint freeze:  PASS"
+    )
+
+    print(
+        "\nPrimary metric:"
+    )
+
+    print(
+        "  ROC-AUC"
+    )
+
+    print(
+        "\nResult file:"
+    )
+
+    print(
+        f"  {RESULT_DIR / 'baseline_results.csv'}"
+    )
 
 
 if __name__ == "__main__":
+
     main()

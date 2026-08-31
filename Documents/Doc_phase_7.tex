@@ -27,7 +27,7 @@
     urlcolor=cyan,
 }
 
-\title{\textbf{BIÊN BẢN NGHIỆM THU: GIAI ĐOẠN 7 -- SINH CÁC CẤU HÌNH HISTORY}}
+\title{\textbf{BÁO CÁO KẾT QUẢ: GIAI ĐOẠN 7 \\ TÁI TẠO LỊCH SỬ ĐÁNH GIÁ \& TẬP TỪ VỰNG VIDEO ĐÓNG BĂNG}}
 \author{Dự án: How Much Intelligence Can We Get For How Little?}
 \date{\today}
 
@@ -38,105 +38,238 @@
 \vspace{15pt}
 
 \section{Mục tiêu}
-Giai đoạn 7 tiến hành xây dựng các mức ngân sách lịch sử hành vi $K$ trên tập evaluation cố định. Quá trình này dựa trên cấu hình đã được lựa chọn và đóng băng (freeze) từ giai đoạn phát triển (Giai đoạn 5):
+Giai đoạn 7 tiến hành tái tạo lịch sử hành vi khả dụng cho từng sự kiện đánh giá (evaluation event) dưới một ngân sách thông tin thời gian được định nghĩa nghiêm ngặt. Các lịch sử kết quả sau đó được chuyển đổi thành nhiều điều kiện độ dài lịch sử $K \in \{0, 1, 5, 10, 20, 50, 100, \mathrm{Full}\}$ để phục vụ cho các thí nghiệm baseline ở hạ nguồn (downstream).
+
+Giai đoạn này có bốn mục tiêu chính:
+\begin{enumerate}[noitemsep]
+    \item Tái tạo cửa sổ lịch sử 1 ngày đóng băng $H_t^{(W)}$ cho mọi sự kiện đánh giá;
+    \item Rút ra tất cả các điều kiện $K$ bằng phương pháp cắt (slicing) cùng một lịch sử đã tái tạo thay vì tái tạo độc lập cho từng điều kiện;
+    \item Xây dựng một tập từ vựng video đóng băng (frozen video vocabulary) dùng chung cho cả video ứng viên (candidate) và video lịch sử;
+    \item Lưu trữ các tệp kết quả (artifacts) có thể kiểm chứng (auditable) để các bước huấn luyện phía sau sử dụng một cách nhất quán.
+\end{enumerate}
+
+\section{Sự kiện Đánh giá}
+Tập đánh giá chứa:
+\[
+N_{\mathrm{eval}} = 43{,}027
+\]
+sự kiện đánh giá.
+
+Mỗi sự kiện chứa các thông tin sau:
 \begin{itemize}[noitemsep]
-    \item Cửa sổ thời gian: $W = 1$ ngày;
-    \item Giới hạn độ dài lịch sử tối đa: $L_{\max} = 2048$;
-    \item Các mức ngân sách thực nghiệm:
-    \[
-    K \in \{0, 1, 5, 10, 20, 50, 100, \text{Full}\}
-    \]
+    \item \texttt{evaluation\_id};
+    \item \texttt{user\_id};
+    \item video ứng viên \texttt{video\_id};
+    \item \texttt{time\_ms};
+    \item nhãn mục tiêu \texttt{long\_view}.
+\end{itemize}
+Các sự kiện đánh giá được sắp xếp theo thời gian và tính duy nhất của \texttt{evaluation\_id} được kiểm tra một cách rõ ràng.
+
+\section{Nguồn Tương tác Lịch sử}
+Thông tin lịch sử được tái tạo độc quyền từ các log tương tác tiêu chuẩn (standard interaction logs):
+\begin{itemize}[noitemsep]
+    \item \texttt{log\_standard\_4\_08\_to\_4\_21\_1k.csv};
+    \item \texttt{log\_standard\_4\_22\_to\_5\_08\_1k.csv}.
 \end{itemize}
 
-\textit{Lưu ý:} Tập test hoàn toàn không được sử dụng trong quá trình xây dựng các cấu hình history này nhằm đảm bảo tính độc lập tuyệt đối.
-
-\section{Phương pháp Xây dựng}
-Để tối ưu hóa chi phí tính toán và tránh tiền xử lý dư thừa, thay vì tái dựng history riêng biệt cho từng giá trị $K$, hệ thống tiến hành tái dựng một lần duy nhất lịch sử đầy đủ trong cửa sổ thời gian $W=1$ ngày:
+Hai tệp này chứa tổng cộng:
 \[
-H_t^{(W)} = \{e_i \mid t-W \leq t_i < t\}
+5{,}055{,}984 + 6{,}657{,}061 = 11{,}713{,}045
 \]
-Điều kiện $t_i < t$ được áp dụng nghiêm ngặt nhằm đảm bảo không có bất kỳ interaction nào xảy ra tại hoặc sau timestamp của evaluation event bị lọt vào history.
+tương tác tiêu chuẩn.
 
-Sau khi xây dựng $H_t^{(W)}$, các cấu hình $K$ hữu hạn được tạo ra bằng phép cắt mảng (slicing), lấy $K$ interaction gần nhất:
+Quá trình tái tạo lịch sử chỉ sử dụng các trường thông tin:
 \[
-H_t^{(K)} = \operatorname{Last}_{\min(K, L_{\max})} \left(H_t^{(W)}\right)
+(\texttt{user\_id}, \texttt{video\_id}, \texttt{time\_ms})
 \]
+Tuyệt đối không có bất kỳ tương lai (future interaction) nào so với thời điểm của sự kiện đánh giá được đưa vào lịch sử của nó.
 
-Đối với trường hợp $K=0$ (Video-only baseline), lịch sử là tập rỗng:
+\section{Lịch sử Thời gian Đóng băng}
+Cửa sổ lịch sử thời gian được cố định ở mức:
 \[
-H_t^{(0)} = \emptyset
+W = 1\ \mathrm{ngày}
 \]
 
-Đối với cấu hình \text{Full}, protocol sử dụng giới hạn $L_{\max}$:
+Đối với một sự kiện đánh giá xảy ra tại thời điểm $t$, cửa sổ lịch sử đầy đủ của nó được định nghĩa là:
 \[
-H_t^{(\text{Full})} = \operatorname{Last}_{L_{\max}} \left(H_t^{(W)}\right)
+H_t^{(W)} = \left\{ v_i \mid t-W \leq t_i < t \right\}
 \]
-Do đó, cấu hình "Full" không biểu diễn toàn bộ timeline vô hạn của người dùng, mà biểu diễn toàn bộ history hợp lệ trong cửa sổ $W=1$ ngày, sau khi đã áp dụng giới hạn cắt tỉa $L_{\max}=2048$.
+Do đó, ranh giới thời gian là một khoảng nửa mở (half-open interval):
+\[
+[t-W, t)
+\]
+Cận trên (upper bound) ngặt là rất quan trọng bởi vì một tương tác xảy ra cùng một thời điểm (timestamp) với sự kiện đánh giá không thể được sử dụng làm thông tin lịch sử.
 
-\section{Kết quả Xây dựng}
-Quá trình sinh lịch sử được thực hiện trên tổng cộng $43,027$ evaluation events. Lịch sử $W=1$ ngày được tái dựng từ $11,713,045$ standard interactions.
+Lịch sử một ngày được tái tạo \textbf{đúng một lần duy nhất}. Tất cả các điều kiện ngân sách lịch sử sau này đều được thu thập bằng cách cắt (slicing) lịch sử đã đóng băng này.
+
+\section{Thống kê Lịch sử}
+Quá trình tái tạo sinh ra lịch sử cho toàn bộ $43{,}027$ sự kiện đánh giá. Kết quả thống kê lịch sử như sau:
 
 \begin{table}[h]
 \centering
-\caption{Thống kê độ dài các mức ngân sách lịch sử $K$}
-\label{tab:phase7-history-stats}
-\begin{tabular}{lrrrr}
+\caption{Thống kê cấu hình lịch sử 1 ngày}
+\label{tab:history-stats}
+\begin{tabular}{lr}
 \toprule
-\textbf{$K$} & \textbf{Mean length} & \textbf{Median} & \textbf{Max} & \textbf{Zero history} \\
+\textbf{Thống kê} & \textbf{Giá trị} \\
 \midrule
-0    & 0.00   & 0   & 0    & 43,027 \\
-1    & 1.00   & 1   & 1    & 93 \\
-5    & 4.98   & 5   & 5    & 93 \\
-10   & 9.95   & 10  & 10   & 93 \\
-20   & 19.83  & 20  & 20   & 93 \\
-50   & 48.86  & 50  & 50   & 93 \\
-100  & 94.82  & 100 & 100  & 93 \\
-Full & 574.55 & 419 & 2048 & 93 \\
+Số lượng sự kiện đánh giá & 43,027 \\
+Độ dài lịch sử trung bình (Mean) & 603.15 \\
+Độ dài lịch sử trung vị (Median) & 419 \\
+Độ dài lịch sử tối đa (Max) & 10,259 \\
+Số sự kiện không có lịch sử (Zero-history) & 93 \\
+Số video ID độc nhất xuất hiện trong lịch sử & 1,863,178 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Phân tích dữ liệu:
+Lịch sử một ngày tối đa có thể vượt quá chiều dài lịch sử tối đa được sử dụng bởi điều kiện ``Full'' ở hạ nguồn. Do đó, điều kiện Full sẽ áp dụng một giới hạn chiều dài chuỗi cố định riêng.
+
+\section{Các Điều kiện Độ dài Lịch sử}
+Sự can thiệp về ngân sách thông tin được xác định là:
+\[
+K \in \{0, 1, 5, 10, 20, 50, 100, \mathrm{Full}\}
+\]
+
+Đối với một $K$ hữu hạn, lịch sử bao gồm $K$ tương tác gần nhất:
+\[
+H_t^{(K)} = \operatorname{last}_K \left( H_t^{(W)} \right)
+\]
+Điều kiện $K=0$ hoàn toàn không chứa lịch sử hành vi.
+
+Đối với điều kiện ``Full'', lịch sử một ngày đã tái tạo được cắt bớt tới giới hạn độ dài tối đa:
+\[
+L_{\max} = 2048
+\]
+Do đó:
+\[
+H_t^{(\mathrm{Full})} = \operatorname{last}_{2048} \left( H_t^{(W)} \right)
+\]
+
+Quá trình này tạo ra các thống kê độ dài lịch sử cuối cùng như sau:
+
+\begin{table}[h]
+\centering
+\caption{Thống kê độ dài các mức ngân sách lịch sử $K$}
+\label{tab:history-length-conditions}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{$K$} & \textbf{Mean} & \textbf{Median} & \textbf{Max} & \textbf{Zero-history} \\
+\midrule
+0 & 0.00 & 0 & 0 & 43,027 \\
+1 & 1.00 & 1 & 1 & 93 \\
+5 & 4.98 & 5 & 5 & 93 \\
+10 & 9.95 & 10 & 10 & 93 \\
+20 & 19.83 & 20 & 20 & 93 \\
+50 & 48.86 & 50 & 50 & 93 \\
+100 & 94.82 & 100 & 100 & 93 \\
+Full & 574.55 & 419 & 2,048 & 93 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Trung vị (median) chính xác của điều kiện ``Full'' được kế thừa từ phân phối gốc, do đó không bị ép phải bằng với chiều dài chuỗi tối đa.
+
+\section{Tập từ vựng Video Đóng băng}
+Một tập từ vựng video duy nhất được xây dựng sau khi tái tạo các lịch sử đã đóng băng. Tập từ vựng được định nghĩa là tập hợp hợp (union) của:
+\[
+V = V_{\mathrm{candidate}} \cup V_{\mathrm{history}}
+\]
+
+Phía ứng viên (candidate) chứa $|V_{\mathrm{candidate}}| = 7{,}388$ video độc nhất. Các lịch sử đã tái tạo chứa $|V_{\mathrm{history}}| = 1{,}863{,}178$ video độc nhất.
+Sau khi thực hiện phép hợp (union), tập từ vựng đóng băng chứa:
+\[
+|V| = 1{,}868{,}274
+\]
+ID video gốc độc nhất.
+
+Tập từ vựng được lưu dưới dạng ánh xạ:
+\[
+\texttt{raw\_video\_id} \longrightarrow \texttt{video\_idx}
+\]
+Chỉ số từ vựng (vocabulary index) bắt đầu từ 0:
+\[
+\texttt{video\_idx} \in \{0, \ldots, |V|-1\}
+\]
+Mô hình sau đó sẽ dịch chuyển (shift) các chỉ số này lên 1 đơn vị, bởi vì chỉ số 0 được dành riêng cho padding:
+\[
+\texttt{model\_video\_id} = \texttt{video\_idx} + 1
+\]
+Do đó, mô hình sử dụng $0$ độc quyền làm chỉ số padding.
+
+\section{Giao thức Xây dựng Từ vựng}
+Tập từ vựng được đóng băng trước khi tiến hành huấn luyện mô hình hạ nguồn. Giao thức xây dựng bao gồm:
+\begin{enumerate}[noitemsep]
+    \item Tái tạo toàn bộ lịch sử một ngày;
+    \item Thu thập các ID video ứng viên từ tập đánh giá cố định;
+    \item Thu thập các ID video trực tiếp từ các lịch sử đã tái tạo;
+    \item Lấy hợp (union) của các ID ứng viên và ID lịch sử;
+    \item Sắp xếp các ID gốc một cách tất định (deterministically);
+    \item Gán các chỉ số từ vựng bắt đầu từ 0 (zero-based);
+    \item Đóng băng ánh xạ kết quả;
+    \item Sử dụng cùng một ánh xạ cho mọi điều kiện $K$.
+\end{enumerate}
+
+Điều này ngăn chặn việc các điều kiện $K$ khác nhau nhận được các ngữ nghĩa chỉ số item khác nhau. Quan trọng hơn, tập từ vựng không được xây dựng từ các video tùy ý trong tập dữ liệu gốc, mà chỉ giới hạn ở các video thực sự xuất hiện dưới dạng ứng viên hoặc bên trong các lịch sử đánh giá đã tái tạo.
+
+\section{Khế ước Artifact (Dữ liệu đầu ra)}
+Giai đoạn 7 tạo ra các tệp kết quả (artifacts) sau trong thư mục \texttt{phase7/}:
+\begin{itemize}[noitemsep]
+    \item \texttt{evaluation\_history.parquet};
+    \item \texttt{video\_vocab.parquet} \& \texttt{video\_vocab\_config.yaml};
+    \item Các tệp lịch sử: \texttt{history\_K0.parquet} đến \texttt{history\_KFull.parquet};
+    \item \texttt{history\_config\_summary.csv} \& \texttt{history\_config.yaml}.
+\end{itemize}
+
+Cam kết (contract) của Artifact cuối cùng:
+\begin{itemize}[noitemsep]
+    \item Các tệp \texttt{history\_K*.parquet} lưu trữ ID video gốc để truy xuất nguồn gốc;
+    \item \texttt{video\_vocab.parquet} cung cấp ánh xạ raw-ID sang chỉ số từ vựng;
+    \item Chỉ số mô hình hạ nguồn được lấy bằng $\texttt{video\_idx} + 1$;
+    \item Padding sử dụng chỉ số $0$;
+    \item Tất cả các điều kiện $K$ sử dụng cùng một tập đánh giá đóng băng;
+    \item Tất cả các điều kiện $K$ được rút ra từ cùng một $H_t^{(W)}$ đã tái tạo;
+    \item Video ứng viên và video lịch sử dùng chung một tập từ vựng.
+\end{itemize}
+
+\section{Kiểm tra Cuối cùng (Audits)}
+Toàn bộ các quy trình kiểm tra (audit) về tính toàn vẹn của Giai đoạn 7 đã được thực thi:
 \begin{itemize}
-    \item Lịch sử $H_t^{(1\text{day})}$ ban đầu (trước khi áp dụng $L_{\max}$) có độ dài trung bình là $603.15$, trung vị $419$ và giá trị lớn nhất (maximum) lên tới $10,259$. 
-    \item Sau khi áp dụng giới hạn ngân sách Full ở mức $L_{\max}=2048$, giá trị maximum giảm xuống đúng $2048$ và độ dài trung bình giảm còn $574.55$.
-    \item Có đúng $93$ evaluation events không có bất kỳ interaction hợp lệ nào trong cửa sổ 1 ngày. Các sự kiện này \textbf{vẫn được giữ lại} trong evaluation set và được biểu diễn bằng history rỗng, tuân thủ tuyệt đối quy tắc xử lý thiếu history của protocol.
+    \item \textbf{Tái tạo Lịch sử:} Đảm bảo đúng khoảng thời gian $[t-W, t)$, sử dụng ID video hợp lệ và lấy từ nguồn log tiêu chuẩn.
+    \item \textbf{Ngân sách Lịch sử:} Đảm bảo $\max |H_t^{(K)}| \leq K$ với $K$ hữu hạn và $\leq 2048$ với $K=\mathrm{Full}$. $K=0$ là rỗng hoàn toàn.
+    \item \textbf{Tập Từ Vựng:} Đảm bảo tính duy nhất của ID, đánh chỉ số liên tục (contiguous) và độ bao phủ toàn diện cho cả ứng viên và lịch sử.
 \end{itemize}
+\textit{Tất cả các bài kiểm tra tính nhất quán artifact cuối cùng của Giai đoạn 7 đều \textbf{PASS}.}
 
-\section{Lưu trữ Kết quả (Artifacts)}
-Toàn bộ các cấu hình history đã được lưu trữ độc lập tại thư mục:
-\begin{verbatim}
-data/processed/phase7/
-\end{verbatim}
-Danh sách các tệp dữ liệu bao gồm:
-\begin{itemize}[noitemsep]
-    \item \texttt{history\_K0.parquet}
-    \item \texttt{history\_K1.parquet}
-    \item \texttt{history\_K5.parquet}
-    \item \texttt{history\_K10.parquet}
-    \item \texttt{history\_K20.parquet}
-    \item \texttt{history\_K50.parquet}
-    \item \texttt{history\_K100.parquet}
-    \item \texttt{history\_KFull.parquet}
-    \item \texttt{history\_config.yaml}
-    \item \texttt{history\_config\_summary.csv}
-\end{itemize}
+\section{Tổng kết Giai đoạn 7}
+Giai đoạn 7 thiết lập giao diện thông tin hành vi được đóng băng cho các thí nghiệm tiếp theo. Giao thức cuối cùng được tóm tắt như sau:
 
-\section{Kiểm tra Protocol (Audit)}
-Các invariant cốt lõi của Giai đoạn 7 đã được xác nhận:
-\begin{itemize}[noitemsep]
-    \item Cấu hình $W=1$ ngày: \textbf{FROZEN}
-    \item Cấu hình $L_{\max}=2048$: \textbf{FROZEN}
-    \item Evaluation set cố định giữa các mức $K$: \textbf{PASS}
-    \item Không rò rỉ dữ liệu từ tập Test: \textbf{PASS}
-    \item Tối ưu hóa tính toán (xây dựng history 1 lần): \textbf{PASS}
-    \item Sinh các mức $K$ bằng phương pháp Slicing: \textbf{PASS}
-\end{itemize}
+\begin{table}[h]
+\centering
+\caption{Tóm tắt Giao thức Giai đoạn 7}
+\label{tab:phase7-summary}
+\begin{tabular}{ll}
+\toprule
+\textbf{Thành phần} & \textbf{Chi tiết / Trạng thái} \\
+\midrule
+Sự kiện đánh giá & 43,027 \\
+Nguồn lịch sử & Tương tác tiêu chuẩn (Standard interactions) \\
+Cửa sổ thời gian & $W = 1$ ngày \\
+Định nghĩa thời gian & $[t-W, t)$ \\
+Lịch sử mô hình tối đa & $L_{\max} = 2048$ \\
+Các điều kiện lịch sử $K$ & $\{0, 1, 5, 10, 20, 50, 100, \mathrm{Full}\}$ \\
+Từ vựng ứng viên & 7,388 \\
+Từ vựng lịch sử & 1,863,178 \\
+Từ vựng hợp (Union) đóng băng & 1,868,274 \\
+Chỉ số Padding & 0 \\
+Chỉ số Model & $\texttt{video\_idx} + 1$ \\
+Đóng băng từ vựng trước huấn luyện & CÓ (Yes) \\
+Các lịch sử K được rút ra bằng slicing & CÓ (Yes) \\
+Kiểm tra tính nhất quán Artifact cuối cùng & ĐẠT (PASS) \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-\vspace{10pt}
-\begin{center}
-\large\textbf{KẾT LUẬN: GIAI ĐOẠN 7 -- HOÀN THÀNH 100\%}
-\end{center}
-\noindent Dữ liệu của tất cả các ngân sách $K$ đã được đóng băng và hoàn toàn sẵn sàng để đưa vào pipeline huấn luyện mô hình (Giai đoạn 8 \& 9).
+\noindent Như vậy, Giai đoạn 7 đã cố định lượng thông tin cung cấp cho các mô hình ở hạ nguồn, đảm bảo rằng mọi sự khác biệt giữa các điều kiện $K$ đều xuất phát từ chính sự can thiệp của ngân sách lịch sử chứ không phải từ sự khác biệt trong tập đánh giá, cách xây dựng từ vựng hay sai lệch trong tái tạo thời gian.
 
 \end{document}
