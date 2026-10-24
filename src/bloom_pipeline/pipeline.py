@@ -1,6 +1,6 @@
 
 """End-to-end Bloom Filter pipeline demo."""
-
+from src.bloom_pipeline.calibration import calibrate_from_observation
 from collections.abc import Sequence
 from time import perf_counter
 
@@ -35,6 +35,12 @@ def run_pipeline(
     )
 
     finished = perf_counter()
+    calibration = calibrate_from_observation(
+    m=m,
+    k=k,
+    fill_ratio=global_filter.fill_ratio,
+    target_fpr=0.01,
+    )
 
     return {
         "num_workers": num_workers,
@@ -52,6 +58,7 @@ def run_pipeline(
         "local_filter_fill_ratios": [
             bloom.fill_ratio for bloom in local_filters
         ],
+        "calibration": calibration,
     }
 
 
