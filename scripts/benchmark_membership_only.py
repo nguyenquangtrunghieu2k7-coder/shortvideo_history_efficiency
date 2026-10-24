@@ -114,13 +114,24 @@ def main():
 
     # Pass 2: Bloom membership lookup only.
     # Keep candidate IDs so exact verification happens outside the timed loop.
+
+    # Pass 2: Bloom membership lookup only.
+    # Use the same history iterator and normalization as the exact pass.
     candidates = []
+    bloom_probe_count = 0
 
     bloom_start = perf_counter()
     for video_id in iter_probe_ids(history, args.max_probes):
+        bloom_probe_count += 1
         if bloom.might_contain(video_id):
             candidates.append(video_id)
     bloom_probe_seconds = perf_counter() - bloom_start
+
+    if bloom_probe_count != probe_count:
+        raise RuntimeError(
+            f"Probe count mismatch: exact={probe_count}, "
+            f"Bloom={bloom_probe_count}"
+        )
 
     # Verify candidates separately using the exact set.
     verification_start = perf_counter()
@@ -170,6 +181,7 @@ def main():
             if bloom_probe_seconds
             else 0.0
         ),
+        "bloom_probe_records": bloom_probe_count,
     }
 
     print("\n=== Bloom membership-only benchmark ===")
