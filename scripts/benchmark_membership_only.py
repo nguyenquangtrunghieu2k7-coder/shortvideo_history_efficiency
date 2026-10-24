@@ -11,8 +11,11 @@ from time import perf_counter
 
 import pandas as pd
 
-from src.bloom_pipeline.bloom_filter import BloomFilter
-from src.bloom_pipeline.calibration import (
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from bloom_pipeline.bloom_filter import BloomFilter
+from bloom_pipeline.calibration import (
     optimal_bit_count,
     optimal_hash_count,
     theoretical_fpr,
