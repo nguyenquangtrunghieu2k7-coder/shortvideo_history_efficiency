@@ -1,0 +1,400 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{graphicx}
+
+\title{\textbf{Adaptive Behavioral History Management for Resource-Efficient Short-Video Recommendation in Serverless Environments}}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Background and Motivation}
+
+Short-video recommendation systems rely heavily on users' historical interactions to predict their preferences and select relevant content. In sequential recommendation, the order and dependency among users' historical interactions are important sources of information for modeling user preferences, and recent research has explored increasingly long behavioral sequences as well as data-centric approaches to sequential recommendation.
+
+In general, providing more behavioral history to a recommendation model may provide richer information about user preferences. However, processing longer histories also introduces additional resource requirements, including data retrieval, storage access, data transfer, preprocessing, feature construction, memory usage, and model inference. Therefore, using the complete available history may not always be necessary when additional historical interactions provide only a limited improvement in recommendation performance.
+
+This problem becomes particularly relevant in a serverless computing environment. In a serverless architecture, computation is executed through on-demand functions, while data may need to be retrieved from external or remote storage for each request. Consequently, the amount of data accessed and transferred can directly affect function execution time, storage requests, memory consumption, and computational cost.
+
+This leads to a data-management question:
+
+\begin{quote}
+\textit{Rather than always retrieving and processing the maximum amount of available behavioral data, can the system determine how much history is actually useful for a given recommendation task?}
+\end{quote}
+
+This project is motivated by the EDAM (Energy-aware Data Management) direction, which considers data-management decisions together with their computational and resource implications.
+
+The project is also refined based on the ideas presented in the BLOOM-FaaS work. BLOOM-FaaS demonstrates the use of early filtering to eliminate unnecessary data before expensive processing in a serverless environment. It also uses runtime information to adapt execution decisions. Importantly, the work shows that data filtering itself introduces overhead and is beneficial only when the reduction in subsequent processing outweighs this overhead.
+
+Following this general principle, this project investigates whether behavioral history can be treated as an adaptively managed data resource: additional historical data should be retrieved and processed only when its expected recommendation benefit justifies the additional resource cost.
+
+The project therefore retains the original recommendation-oriented research direction, while refining it toward a broader serverless data-management perspective.
+
+\section{Research Question}
+
+\subsection*{Main Research Question}
+How can behavioral history be managed adaptively in a serverless recommendation workload to optimize the trade-off between recommendation quality and resource cost?
+
+The main research question is decomposed into the following sub-questions:
+
+\begin{description}
+    \item[RQ1. Effect of behavioral history:] How does the amount of behavioral history affect recommendation quality in a supervised learning setting?\\
+    This question establishes the relationship between the amount of historical behavioral data used as model input and the resulting prediction performance. The initial task will be formulated as a binary supervised-learning problem using the \texttt{long\_view} label in KuaiRand, where the model predicts whether a user will exhibit a long-view interaction with a recommended video.
+
+    \item[RQ2. Resource and computational cost:] How does the amount of behavioral history affect the resource cost of a recommendation request?\\
+    The analysis will consider not only computation but also the data-management cost associated with processing history, including:
+    \begin{itemize}
+        \item amount of data retrieved;
+        \item storage access;
+        \item data transferred;
+        \item preprocessing workload;
+        \item inference latency;
+        \item memory usage;
+        \item computational workload;
+        \item and, where reliable infrastructure is available, energy consumption.
+    \end{itemize}
+
+    \item[RQ3. Cost-benefit condition:] Under what conditions does additional behavioral history provide sufficient recommendation benefit to justify its additional resource cost?\\
+    This question investigates the marginal benefit of processing additional history relative to its marginal cost.
+
+    \item[RQ4. Adaptive data management:] Can an adaptive history-management strategy reduce the amount of data processed and the corresponding resource cost while maintaining an acceptable level of recommendation quality?\\
+    This question investigates whether the observations from RQ1-RQ3 can be converted into a practical data-management mechanism.
+\end{description}
+
+\section{Objectives}
+
+The project has four main objectives.
+
+\subsection*{Objective 1 - Quantify the value of behavioral history}
+Measure how recommendation performance changes as different amounts of recent behavioral history are provided to the model. The initial experiments will consider:
+\[ K \in \{0, 1, 5, 10, 20, 50, 100, \text{Full}\} \]
+where $K$ represents the number of recent behavioral interactions retrieved and processed for a recommendation request. 
+The goal is not to develop a new state-of-the-art recommendation architecture. Instead, the same general model architecture and experimental protocol will be used to isolate the effect of the amount of behavioral data.
+
+\subsection*{Objective 2 - Quantify data-management and computational implications}
+Measure how increasing $K$ affects the resources required by a recommendation request, including:
+\begin{itemize}
+    \item behavioral data retrieved;
+    \item storage access;
+    \item data transfer;
+    \item preprocessing workload;
+    \item inference latency;
+    \item memory usage;
+    \item computational workload;
+    \item and, where reliable measurement infrastructure is available, energy consumption.
+\end{itemize}
+Energy consumption will be treated as an additional evaluation dimension rather than a mandatory requirement if the experimental environment does not support reliable measurement.
+
+\subsection*{Objective 3 - Identify the quality-cost relationship}
+Analyze the marginal recommendation benefit obtained from additional behavioral history against the additional resource cost.
+For two history configurations $K_1$ and $K_2$:
+\[ \Delta Q = Q(K_2) - Q(K_1) \]
+represents the additional recommendation benefit, while
+\[ \Delta C = C(K_2) - C(K_1) \]
+represents the additional resource/computational cost.
+The project will investigate the relationship between $\Delta Q$ and $\Delta C$ to identify regions where additional history provides diminishing returns.
+
+\subsection*{Objective 4 - Develop an adaptive history-management strategy}
+Based on the previous analysis, design a simple and interpretable mechanism that determines how much behavioral history should be retrieved and processed for a recommendation request.
+
+The initial decision loop is:
+\begin{center}
+Observe $\rightarrow$ Estimate Benefit/Cost $\rightarrow$ Select History $\rightarrow$ Retrieve/Process $\rightarrow$ Recommend
+\end{center}
+
+The system should avoid retrieving and processing additional history when the expected recommendation benefit is insufficient relative to its resource cost.
+
+\section{Related Work and Research Context}
+
+\subsection{Sequential and Short-Video Recommendation}
+Sequential recommendation has become an important research direction because user preferences can depend on the order and dependencies among historical interactions. Recent surveys identify several active directions, including ultra-long sequential recommendation and data-centric sequential recommendation.
+
+Video recommendation research also includes increasingly sophisticated models for user behavior modeling, watch-time prediction, multimodal information, and industrial-scale recommendation. Recent work on short-video recommendation, for example, explores modeling users' historical watching behavior to improve watch-time prediction.
+
+However, the objective of this project is different from developing another recommendation architecture. The project focuses on the data-management side of recommendation:
+\begin{quote}
+\textit{How much historical data should actually be retrieved and processed for a recommendation request, and what is the resource cost of that decision?}
+\end{quote}
+This provides a complementary perspective to model-centric recommendation research.
+
+\subsection{Serverless Data Management}
+Serverless computing introduces a different execution model from conventional long-running servers. Functions are invoked on demand, while application data may be stored separately from compute resources.
+
+Consequently, unnecessary data processing can result not only in additional computation but also in additional storage access, data transfer, function execution, and memory requirements. This makes data reduction and adaptive processing decisions particularly relevant.
+
+\subsection{BLOOM-FaaS as Methodological Inspiration}
+BLOOM-FaaS provides a concrete example of adaptive data reduction in serverless data processing. It uses Bloom Filters to filter unnecessary data before expensive join processing and employs runtime information to adapt execution decisions. The reported evaluation considers intermediate data, function invocations, storage requests, execution time, and monetary cost.
+
+The current project does not aim to reproduce BLOOM-FaaS or directly apply Bloom Filters to recommendation. Instead, it adopts the broader principle:
+\begin{quote}
+\textit{Reduce or avoid unnecessary data processing when the expected resource savings justify the overhead of making the decision.}
+\end{quote}
+This principle is transferred from serverless join processing to behavioral-history management in recommendation.
+
+\section{Research Methodology}
+
+\subsection{Experimental Workload: KuaiRand}
+The initial workload will remain the KuaiRand short-video recommendation dataset. KuaiRand contains user-video interaction histories and provides an experimental setting involving random intervention, making it suitable for controlled offline recommendation experiments. The primary prediction target is \texttt{long\_view}, formulated as a binary supervised-learning task.
+
+The initial development and experiments will use KuaiRand-1K. If the methodology proves feasible and computational resources permit, the experiments may later be extended to KuaiRand-27K. The existing data pipeline and leakage-control work from the initial proposal will be retained and refined rather than rebuilt from scratch.
+
+\subsection{Step 1 - Fixed-History Baseline}
+The first stage establishes a controlled baseline by training and evaluating models using different fixed amounts of behavioral history:
+\[ K \in \{0, 1, 5, 10, 20, 50, 100, \text{Full}\} \]
+For each $K$:
+\begin{itemize}
+    \item the general model architecture remains the same;
+    \item the training/evaluation protocol remains the same;
+    \item the target remains \texttt{long\_view};
+    \item only the amount of behavioral history is changed.
+\end{itemize}
+
+\textbf{Recommendation-quality metric:} The primary metric will be ROC-AUC (Receiver Operating Characteristic - Area Under the Curve). ROC-AUC measures how well a binary classifier distinguishes positive and negative examples across classification thresholds. It is appropriate here because \texttt{long\_view} is formulated as a binary supervised-learning target. Additional metrics such as log loss may also be considered.
+
+This experiment answers: \textit{How much predictive information can be obtained from different amounts of behavioral history?}
+
+\subsection{Step 2 - Data-Management and Resource-Cost Analysis}
+For each history length $K$, the project will measure both recommendation quality and resource requirements. The resulting relationship can be represented as:
+\[ K \rightarrow (\text{Recommendation Quality, Data Cost, Computational Cost}) \]
+
+The analysis will consider:
+
+\begin{table}[h]
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{History} & \textbf{Quality} & \textbf{Data Retrieved} & \textbf{Storage Access} & \textbf{Data Transfer} & \textbf{Latency} & \textbf{Memory} \\
+\midrule
+$K = 0$ & measured & measured & measured & measured & measured & measured \\
+$K = 1$ & measured & measured & measured & measured & measured & measured \\
+$K = 5$ & measured & measured & measured & measured & measured & measured \\
+$K = 10$ & measured & measured & measured & measured & measured & measured \\
+$K = 20$ & measured & measured & measured & measured & measured & measured \\
+$K = 50$ & measured & measured & measured & measured & measured & measured \\
+$K = 100$ & measured & measured & measured & measured & measured & measured \\
+Full & measured & measured & measured & measured & measured & measured \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+The purpose is to characterize the quality-resource trade-off rather than simply identify the configuration with the highest AUC.
+
+\subsection{Step 3 - Serverless History Management}
+The project will investigate how the behavioral-history pipeline can be represented as a serverless data-management workload.
+
+A simplified request flow is:
+\begin{center}
+Recommendation Request \\
+$\downarrow$ \\
+Determine Required History \\
+$\downarrow$ \\
+Retrieve History from Storage \\
+$\downarrow$ \\
+Filter / Select Relevant History \\
+$\downarrow$ \\
+Transfer to Serverless Function \\
+$\downarrow$ \\
+Preprocess and Encode \\
+$\downarrow$ \\
+Recommendation Model \\
+$\downarrow$ \\
+Prediction
+\end{center}
+
+This perspective makes the history length $K$ a data-management decision, rather than only a model hyperparameter. For example, increasing $K$ may improve prediction quality, but it may also increase amount of data retrieved from storage, storage access, data transfer, preprocessing, function execution time, and memory requirements.
+
+Therefore, the system should determine whether additional history is worth retrieving and processing. The initial implementation will prioritize a small, reproducible serverless prototype rather than attempting to reproduce a production-scale serverless recommendation platform.
+
+\subsection{Step 4 - Marginal Benefit and Cost Analysis}
+For neighboring history configurations:
+\[ K_1 \rightarrow K_2 \]
+the project will estimate:
+\[ \Delta Q = Q(K_2) - Q(K_1) \]
+and
+\[ \Delta C = C(K_2) - C(K_1) \]
+
+The analysis will investigate the amount of additional recommendation benefit obtained per unit of additional resource cost. This can identify situations such as:
+\begin{itemize}
+    \item Increasing history from $K=20$ to $K=50$ provides a noticeable improvement.
+    \item but: Increasing history from $K=100$ to Full provides only a small improvement while requiring substantially more data processing.
+\end{itemize}
+Such diminishing-return regions provide the basis for adaptive history management.
+
+\subsection{Step 5 - Adaptive History Management}
+Based on the previous experiments, an interpretable adaptive mechanism will be designed. A conceptual decision process is:
+
+\begin{center}
+Current Request \\
+$\downarrow$ \\
+Current History $K$ \\
+$\downarrow$ \\
+Estimate Additional Benefit + Estimate Additional Resource Cost \\
+$\downarrow$ \\
+Is Additional History Worth the Cost? \\
+(Yes $\rightarrow$ Increase $K$, No $\rightarrow$ Keep Current $K$) \\
+$\searrow \quad \swarrow$ \\
+Recommendation
+\end{center}
+
+The first implementation will not introduce a complex learning-based controller. Instead, it will investigate simple decision criteria based on the experimentally measured quality-cost relationship.
+
+For example, additional history may be selected only when:
+\[ \frac{\text{estimated marginal recommendation benefit}}{\text{marginal resource cost}} > \text{predefined threshold} \]
+Different thresholds can then be evaluated experimentally.
+
+\subsection{Optional Generalization to TPC-H}
+To investigate whether the proposed data-management principle is specific to recommendation or can be generalized to serverless data-processing workloads, TPC-H may be considered as a secondary benchmark. TPC-H is a standard decision-support benchmark containing relational data and analytical queries.
+
+The potential extension is:
+\begin{center}
+Serverless Data Management $\rightarrow$ Data Reduction / Selection Strategy $\rightarrow$ TPC-H analytical workload $\rightarrow$ Data processed / Storage / Transfer / Execution Cost
+\end{center}
+
+However, TPC-H will be treated as a secondary or optional extension, depending on project scope, infrastructure, and guidance. The primary implementation will remain the KuaiRand recommendation workload so that the project remains feasible and builds directly on the existing work.
+
+\section{Evaluation}
+
+The adaptive strategy will be compared against fixed-history baselines. The main evaluation dimensions are:
+
+\begin{itemize}
+    \item \textbf{Recommendation quality:} ROC-AUC, potentially log loss.
+    \item \textbf{Data-management cost:} amount of data retrieved, storage access, amount of data transferred, amount of data processed.
+    \item \textbf{Computational cost:} serverless function execution time, end-to-end latency, memory usage, computational workload, function invocations where applicable.
+    \item \textbf{Resource efficiency:} quality achieved per unit of resource cost, optional energy consumption when reliable measurement infrastructure is available.
+    \item \textbf{Adaptation effectiveness:} reduction in retrieved/processed history, reduction in resource cost, recommendation-quality change relative to fixed-history baselines.
+\end{itemize}
+
+The desired outcome is not simply to maximize recommendation quality. Instead, the project aims to determine whether adaptive history management can reduce unnecessary data processing while maintaining recommendation quality within an acceptable range.
+
+\section{Relationship to EDAM}
+
+The project can be viewed as an EDAM-oriented data-management problem with a recommendation workload. The central relationship is:
+
+\begin{center}
+Data-management decision \\
+$\downarrow$ \\
+Amount of data accessed / transferred / processed \\
+$\downarrow$ \\
+Resource and computational usage \\
+$\downarrow$ \\
+Execution cost and system performance \\
+$\downarrow$ \\
+Application-level recommendation quality
+\end{center}
+
+In this project, the data-management decision is: \textit{How much behavioral history should be retrieved and processed for a recommendation request?}
+
+Using less history may reduce resource consumption but may also reduce recommendation quality. Using more history may improve prediction but may introduce additional storage, transfer, and computation costs. Therefore, behavioral history is treated as a data resource whose amount can be dynamically controlled according to its expected value and cost.
+
+This framing also explains the relevance of BLOOM-FaaS. Its early-filtering mechanism demonstrates that unnecessary data can be removed before expensive computation, while adaptive execution decisions can be based on runtime information. At the same time, the filtering mechanism itself has a cost, meaning that data reduction should be applied when its benefit justifies its overhead.
+
+The proposed project transfers this general principle to recommendation:
+\begin{center}
+Early data filtering in serverless data processing \\
+$\downarrow$ \\
+Adaptive behavioral-history management in serverless recommendation
+\end{center}
+
+The project therefore does not attempt to reproduce the BLOOM-FaaS architecture or directly apply Bloom Filters.
+
+\section{Experimental Infrastructure}
+
+The initial experiments can be developed using a local or cloud-based reproducible environment.
+
+If appropriate infrastructure and access are available, experiments may be conducted on Grid5000 to investigate resource consumption and performance under a controlled research infrastructure. Grid5000 is considered an optional experimental infrastructure rather than a mandatory dependency of the project.
+
+Similarly, energy consumption will only be treated as a primary evaluation dimension if reliable measurement facilities are available. This keeps the core research question independent of a specific infrastructure while allowing the project to be extended toward energy-aware evaluation.
+
+\section{Expected Contributions}
+
+The project is expected to provide the following contributions:
+\begin{enumerate}
+    \item \textbf{Empirical characterization of behavioral-history efficiency:} Quantify how much predictive information can be obtained from different amounts of behavioral history in the KuaiRand short-video recommendation workload.
+    \item \textbf{Quality-resource characterization:} Establish the relationship between history length, recommendation quality, data-management cost, and computational cost.
+    \item \textbf{Cost-benefit analysis:} Investigate when additional behavioral history provides sufficient recommendation benefit to justify the additional data-access and processing cost.
+    \item \textbf{Adaptive history-management strategy:} Develop and evaluate an interpretable mechanism for dynamically selecting the amount of behavioral history to retrieve and process.
+    \item \textbf{Serverless data-management case study:} Demonstrate how a recommendation workload can be used as a concrete case study for adaptive data-management decisions in serverless computing.
+    \item \textbf{Potential generalization:} Investigate whether the underlying data-management principle can be extended beyond recommendation through a benchmark such as TPC-H, subject to project scope and available resources.
+\end{enumerate}
+
+\section{Scope and Limitations}
+
+\textbf{The project will focus on:}
+\begin{itemize}
+    \item short-video recommendation;
+    \item supervised prediction using behavioral interaction history;
+    \item behavioral-history management;
+    \item data retrieval and processing;
+    \item serverless execution;
+    \item recommendation quality;
+    \item computational and resource cost;
+    \item adaptive data-management decisions;
+    \item the KuaiRand experimental environment.
+\end{itemize}
+
+\textbf{The project will not initially focus on:}
+\begin{itemize}
+    \item developing a new state-of-the-art recommendation architecture;
+    \item building a production-scale recommendation platform;
+    \item reproducing the BLOOM-FaaS architecture;
+    \item directly applying Bloom Filters to recommendation;
+    \item full online A/B testing;
+    \item causal claims about real-world recommendation policies;
+    \item requiring Grid5000 as a prerequisite;
+    \item requiring energy measurement when reliable infrastructure is unavailable.
+\end{itemize}
+
+TPC-H and Grid5000 will be considered possible extensions rather than mandatory components of the minimum viable project. The conclusions will therefore be interpreted within the selected workload, dataset, serverless prototype, and experimental environment.
+
+\section{Expected Hypothesis}
+
+The project investigates the following hypothesis:
+\begin{quote}
+\textit{Increasing behavioral-history length can improve recommendation quality, but the marginal benefit of additional history eventually decreases while data-access and computational costs continue to increase.}
+\end{quote}
+
+Therefore:
+\begin{quote}
+\textit{An adaptive data-management strategy may reduce the amount of behavioral data retrieved and processed while maintaining an acceptable level of recommendation quality.}
+\end{quote}
+
+This hypothesis will be tested empirically rather than assumed to hold for all users, models, workloads, or serverless environments.
+
+\section{Preliminary Experimental Plan}
+
+\begin{description}
+    \item[Phase 1 - Literature and problem refinement:] Review sequential and short-video recommendation literature. Review serverless data-management and adaptive data-processing approaches. Study BLOOM-FaaS and related EDAM work. Refine the research problem and experimental design. Define the relationship between recommendation quality and resource cost.
+    \item[Phase 2 - Dataset and experimental setup:] Finalize the KuaiRand data pipeline. Verify evaluation data and leakage controls. Define behavioral-history construction. Establish the supervised-learning task and evaluation protocol. Design the initial serverless execution prototype.
+    \item[Phase 3 - Fixed-history experiments:] Train/evaluate for $K \in \{0, 1, 5, 10, 20, 50, 100, \text{Full}\}$. Measure recommendation quality, data retrieved, data transferred, latency, memory, and computational workload.
+    \item[Phase 4 - Quality-resource analysis:] Construct quality-resource curves. Analyze marginal recommendation benefit and marginal resource cost. Identify diminishing-return regions. Investigate conditions under which additional history is worthwhile.
+    \item[Phase 5 - Adaptive strategy:] Design the adaptive history-selection mechanism. Implement the decision loop. Evaluate different decision thresholds/criteria. Compare adaptive selection with fixed-history configurations.
+    \item[Phase 6 - Serverless evaluation and optional extension:] Evaluate the strategy in the serverless prototype. Analyze storage access, data transfer, function execution, and latency. If feasible, investigate energy consumption. If scope and infrastructure permit, explore generalization using TPC-H. If available, conduct additional experiments on Grid5000.
+    \item[Phase 7 - Analysis and documentation:] Analyze experimental results. Discuss limitations. Relate findings to EDAM and serverless data management. Prepare the final report, presentation, and demonstration.
+\end{description}
+
+\section{Expected Outcome}
+
+The final outcome will be a reproducible experimental study investigating whether behavioral history can be treated as an adaptively managed data resource in a serverless short-video recommendation workload.
+
+The central relationship investigated will be:
+\begin{center}
+Behavioral History $\rightarrow$ Data Access / Transfer / Processing $\rightarrow$ Resource Cost $\leftrightarrow$ Recommendation Quality
+\end{center}
+
+The project will then investigate whether an adaptive strategy can operate near a favorable quality-resource trade-off instead of always retrieving and processing the maximum available history.
+
+The recommendation workload provides a concrete case study, while the broader serverless data-management perspective allows the underlying principle to potentially be generalized to other data-processing workloads, such as TPC-H, depending on the available scope and infrastructure.
+
+\end{document}

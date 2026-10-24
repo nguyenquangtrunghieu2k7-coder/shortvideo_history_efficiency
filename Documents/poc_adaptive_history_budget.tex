@@ -1,0 +1,538 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[vietnamese,english]{babel}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{cite}
+
+\geometry{margin=1in}
+
+\title{\textbf{Proof-of-Concept Report: Adaptive Behavioral History Management for Resource-Efficient Short-Video Recommendation}}
+\author{Nguyễn Quang Trung Hiếu}
+\date{\today}
+\usepackage[T5]{fontenc}
+\begin{document}
+
+\selectlanguage{english}
+\maketitle
+
+\begin{abstract}
+Behavioral history is an important source of information for short-video recommendation. However, longer histories require more interactions to be stored, retrieved, and processed, while additional interactions do not necessarily provide proportional improvements in predictive performance. This proof of concept (PoC) investigates whether limiting the amount of recent behavioral history can reduce data-processing requirements while retaining an acceptable level of recommendation-related predictive performance. The implementation uses existing data artifacts and baseline evaluation results from the KuaiRand-1K dataset. It introduces a history-budget selection policy based on validation ROC-AUC and benchmarks history processing for the selected configuration against a full-history reference. The history budget is selected from $K \in \{0, 1, 5, 10, 20, 50, 100, \mathrm{Full}\}$. With an allowable validation AUC decrease of $\epsilon = 0.05$, the policy selects $K = 100$, the smallest tested budget satisfying the predefined validation constraint. On 43,027 evaluation requests, this configuration contains 4,079,877 history interactions, compared with 24,721,035 for Full, representing an 83.50\% reduction. A repeated local streaming benchmark records median processing times of 0.512 seconds for $K = 100$ and 2.895 seconds for Full, a measured reduction of 82.31\%. The existing baseline results show a test ROC-AUC of 0.579012 for $K = 100$, compared with 0.614246 for Full. Thus, the observed reduction in history volume comes with a measurable decrease in predictive discrimination. These results demonstrate the initial feasibility of a global history-budget selection policy. They do not establish serverless cost savings, energy savings, or per-user adaptive recommendation.
+\end{abstract}
+
+\noindent\textbf{Keywords:} KuaiRand, short-video recommendation, behavioral history, history budget, ROC-AUC, mean pooling, resource efficiency, proof of concept.
+
+\section{Introduction}
+\subsection{Background and motivation}
+Short-video recommendation systems use users' previous interactions to estimate their interests and predict how they may respond to candidate videos. A behavioral history may contain hundreds or thousands of interactions, but not every interaction necessarily contributes equally to the prediction.
+
+Recent interactions may provide useful signals about a user's current interests, whereas older interactions may contain redundant or less relevant information. Consequently, providing a model with more history does not guarantee a proportional increase in predictive performance.
+
+At the same time, processing longer histories can require more data access and computation. This motivates a practical question:
+\begin{quote}
+\emph{Can a recommendation model use a smaller amount of recent behavioral history while retaining an acceptable level of predictive performance?}
+\end{quote}
+The original research direction, \textit{How Much Intelligence Can We Get for How Little?}, approaches this question by treating history length as a controlled experimental variable. The PoC extends this direction with a preliminary resource-efficiency investigation.
+
+\subsection{Objectives}
+The PoC has three objectives:
+\begin{enumerate}
+    \item \textbf{History-budget selection:} Select the smallest tested history budget that satisfies a predefined validation AUC constraint.
+    \item \textbf{History-volume measurement:} Quantify how limiting history changes the total number of interactions represented in the evaluation histories.
+    \item \textbf{Runtime benchmarking:} Measure the time required to read and process the stored history data under a controlled local benchmark.
+\end{enumerate}
+The project reuses existing baseline models, checkpoints, and evaluation results. The benchmark stage does not retrain the models.
+
+\subsection{Scope}
+This work is a proof of concept rather than a production recommendation system. It focuses on a global history-budget policy and the processing of precomputed history artifacts.
+
+It does not introduce a new state-of-the-art recommendation architecture, perform causal treatment-effect estimation, or deploy a complete adaptive recommendation pipeline on a serverless platform.
+
+\section{Dataset and Evaluation Task}
+\subsection{Dataset}
+The PoC uses KuaiRand-1K, a dataset derived from short-video recommendation logs from Kuaishou. It contains chronological user--video interactions and multiple observable feedback signals, including clicks, likes, follows, comments, play time, and long-view outcomes.
+
+The processed evaluation artifacts contain:
+\begin{itemize}
+    \item Evaluation events: 43,027
+    \item Unique users: 1,000
+    \item Unique observed videos: 7,388
+    \item Positive long-view labels: 3,621
+    \item Negative long-view labels: 39,406
+    \item Positive-label rate: 8.42\%
+\end{itemize}
+
+All 43,027 evaluation events in the inspected artifact have \texttt{is\_rand = 1}, indicating that the evaluation set consists of random-intervention observations.
+
+These observations are useful for studying predictive discrimination under observed exposures. However, random intervention should not be interpreted as eliminating every source of exposure bias or providing outcomes for every possible candidate video.
+
+\subsection{Prediction target}
+The target variable is \texttt{long\_view}, a binary label supplied by KuaiRand:
+\begin{equation}
+y \in \{0, 1\}
+\end{equation}
+The model predicts the probability of a long-view outcome for an observed user--video exposure.
+
+The primary evaluation task is therefore to distinguish observed positive long-view outcomes from observed negative outcomes. It is not a complete evaluation of a recommendation policy over every video that could have been recommended.
+
+\subsection{Why use long-view?}
+The project uses the dataset's existing \texttt{long\_view} label rather than defining a new engagement threshold.
+
+This choice avoids introducing an additional subjective threshold for watch duration or watch ratio. It also keeps the target definition consistent across history-budget configurations.
+
+\section{Behavioral History Construction}
+\subsection{Temporal eligibility}
+For an evaluation event at time $t$, let $H_t$ denote the eligible behavioral history. Only interactions occurring strictly before the evaluation timestamp are allowed:
+\begin{equation}
+H_t = \{e_i < t\}
+\end{equation}
+The implemented history window is one day. More precisely, eligible events satisfy:
+\begin{equation}
+t - 24\text{ hours} \leq t_i < t
+\end{equation}
+This constraint prevents future interactions from being included in the history used to predict an earlier outcome.
+
+The one-day window also limits the historical context to a consistent temporal range. It was used as a fixed configuration in this PoC rather than being optimized during the benchmark.
+
+\subsection{History budgets}
+The finite history budgets are:
+\begin{equation}
+K \in \{0, 1, 5, 10, 20, 50, 100\}
+\end{equation}
+For a positive finite budget, the history contains at most the $K$ most recent eligible interactions:
+\begin{equation}
+H_t^{(K)} = \operatorname{LastK}(H_t)
+\end{equation}
+For $K = 0$, no behavioral history is supplied.
+
+The Full configuration contains the available history within the one-day window, truncated to at most 2,048 interactions:
+\begin{equation}
+\operatorname{Last}_{2048}(H_t)
+\end{equation}
+Thus, Full is a bounded full-history reference within the predefined window, not unlimited access to every interaction in the dataset.
+
+\subsection{History reconstruction and reuse}
+The history-generation pipeline reconstructs the one-day history once and derives the finite-budget configurations by slicing that history.
+
+This approach is useful for two reasons:
+\begin{itemize}
+    \item It avoids repeating the full history-reconstruction process for every value of $K$.
+    \item It ensures that configurations are derived from the same underlying historical context.
+\end{itemize}
+The same evaluation event set is used across the history-budget configurations, so the comparison is not intentionally driven by changing the evaluation population.
+
+\subsection{Padding and masking}
+The model implementation represents histories as tensors. Because histories have different lengths, shorter sequences are padded to a common length within a dataset split.
+
+Padding uses index zero, while valid interactions are marked by a binary history mask:
+\begin{equation}
+m_{ij} = \begin{cases}
+1 & \text{if interaction } j \text{ is valid} \\
+0 & \text{if interaction } j \text{ is padding}
+\end{cases}
+\end{equation}
+The mask prevents padding entries from contributing to the aggregated history representation.
+
+A frozen video vocabulary is used to map raw video identifiers to model indices, with zero reserved for padding. This keeps identifier encoding consistent across the compared configurations.
+
+\section{Baseline Model Architecture}
+\subsection{Model overview}
+The baseline model is a lightweight embedding-based neural recommender with
+masked mean pooling and a multilayer perceptron (MLP) classifier.
+It is implemented in PyTorch as \texttt{KuaiRand\-Recommender}.
+
+The main components are:
+\begin{enumerate}
+    \item Candidate video embedding.
+    \item Historical interaction embeddings.
+    \item Masked mean-pooling aggregation.
+    \item Feature concatenation.
+    \item MLP classification head.
+    \item Sigmoid probability output.
+\end{enumerate}
+The model is intentionally simple. The main research variable is the amount of behavioral history, not architectural complexity. Using a lightweight baseline makes it easier to compare history budgets while keeping the modeling approach fixed.
+
+\subsection{Candidate video embedding}
+Each candidate video is mapped to a trainable 64-dimensional embedding:
+\begin{equation}
+\mathbf{v} \in \mathbb{R}^{64}
+\end{equation}
+The embedding represents the candidate video using its identifier. The inspected baseline architecture does not combine additional video metadata such as duration or author features in this embedding module.
+
+\subsection{Historical interaction embeddings}
+Each historical video identifier is mapped to a 64-dimensional embedding:
+\begin{equation}
+\mathbf{e}_j \in \mathbb{R}^{64}
+\end{equation}
+For a history of length $L$, the model obtains a sequence of historical embeddings. The history encoder and candidate encoder are separate embedding modules in the implementation.
+
+This design provides a straightforward representation of historical interactions without introducing a recurrent network or Transformer.
+
+\subsection{Masked mean pooling}
+The historical embeddings are aggregated into a single user-state vector using masked mean pooling:
+\begin{equation}
+\mathbf{h}_t^{(K)} = \frac{\sum_{j=1}^{L} m_j \mathbf{e}_j}{\max\left(1, \sum_{j=1}^{L} m_j\right)}
+\end{equation}
+where:
+\begin{itemize}
+    \item $L$ is the padded sequence length;
+    \item $\mathbf{e}_j$ is the embedding of the $j$-th historical interaction;
+    \item $m_j$ is the validity mask.
+\end{itemize}
+The result is a 64-dimensional history representation.
+
+Mean pooling was chosen because it is simple, computationally lightweight, and keeps the output dimension independent of history length. As a result, changing $K$ does not require changing the downstream classifier's input dimension.
+
+An important limitation is that mean pooling does not explicitly model interaction order or temporal dependencies between individual events. This is acceptable for the current PoC because the primary goal is to investigate the effect of history volume, not to compare sequence-model architectures.
+
+For an empty history, the mask produces a zero history representation.
+
+\subsection{Feature fusion and classification}
+The history representation and candidate embedding are concatenated:
+\begin{equation}
+[\mathbf{h}_t^{(K)}; \mathbf{v}] \in \mathbb{R}^{128}
+\end{equation}
+The MLP classifier has two hidden layers:
+\begin{equation}
+128 \rightarrow 128 \rightarrow 64 \rightarrow 1
+\end{equation}
+Each hidden layer uses ReLU activation and batch normalization. The final layer produces a scalar logit, followed by a sigmoid activation:
+\begin{equation}
+\hat{y} = \sigma(g_\theta(\mathbf{z}))
+\end{equation}
+where $\hat{y}$ is the predicted probability of a long-view outcome.
+
+For the main history-budget comparison, the intended invariant is that the model architecture and training protocol remain fixed while only the available history changes. The $K=0$ condition has no valid history contribution.
+
+\subsection{Why not use a Transformer or a more complex model?}
+A more complex sequential model could potentially capture temporal order and interactions between historical events. However, introducing such a model would also introduce additional architectural choices, parameters, and computational requirements.
+
+The lightweight baseline is more appropriate for this initial PoC because it:
+\begin{itemize}
+    \item isolates history budget as the main variable of interest;
+    \item avoids introducing unnecessary architectural complexity;
+    \item makes the experiment easier to reproduce;
+    \item keeps model development and evaluation computationally manageable.
+\end{itemize}
+The results should therefore be interpreted as findings for this particular baseline and protocol, not as universal conclusions about every recommendation model.
+
+\section{Training Procedure}
+\subsection{Training configuration}
+The inspected baseline training implementation uses the following settings:
+\begin{table}[htbp]
+\centering
+\begin{tabular}{ll}
+\toprule
+\textbf{Component} & \textbf{Configuration} \\
+\midrule
+Framework & PyTorch \\
+Embedding dimension & 64 \\
+MLP hidden dimensions & 128, 64 \\
+Hidden activation & ReLU \\
+Normalization & BatchNorm1d \\
+Output activation & Sigmoid \\
+Loss function & Binary cross-entropy \\
+Optimizer & Adam \\
+Learning rate & 0.001 \\
+Batch size & 2,048 \\
+Maximum epochs & 20 \\
+Early-stopping patience & 3 epochs \\
+Model-selection metric & Validation ROC-AUC \\
+\bottomrule>
+\end{tabular}
+\end{table}
+
+The pre-existing training artifacts use train, validation, and test splits containing 30,118, 6,454, and 6,455 evaluation records, respectively. The total is 43,027 records.
+
+The split-generation procedure should be documented separately before claiming that these are chronological partitions. This PoC report does not assume a temporal split solely from the split sizes.
+
+\subsection{Why binary cross-entropy?}
+The target \texttt{long\_view} is binary, and the model outputs a probability $\hat{y}$ through a sigmoid activation. Binary cross-entropy is therefore used as the training objective:
+\begin{equation}
+\mathcal{L} = -\frac{1}{N} \sum_{i=1}^{N} \left[ y_i \log \hat{y}_i + (1 - y_i) \log (1 - \hat{y}_i) \right]
+\end{equation}
+This loss penalizes incorrect probability estimates for positive and negative outcomes and provides a direct objective for binary classification.
+
+Binary cross-entropy is the optimization loss; it is not the primary metric used to choose the history budget.
+
+\subsection{Why Adam?}
+Adam is used as the optimizer with a learning rate of $10^{-3}$. It is a practical default for training embedding-based neural networks and MLPs, combining adaptive per-parameter learning rates with momentum-like estimates.
+
+The PoC does not claim that Adam is optimal. The intent is to use a fixed, workable optimization configuration rather than expand the experiment into an optimizer comparison.
+
+\subsection{Early stopping and checkpoint selection}
+Training runs for up to 20 epochs, with early-stopping patience set to three epochs.
+
+The checkpoint with the best validation ROC-AUC is retained. This limits unnecessary training after validation performance stops improving and provides a consistent selection rule for the existing baseline models.
+
+For the current PoC, these training runs and checkpoints are already available. The new history-processing benchmark does not retrain them.
+
+\section{Evaluation Metrics and Selection Policy}
+\subsection{Primary predictive metric: ROC-AUC}
+The primary evaluation metric is the area under the receiver operating characteristic curve (ROC-AUC).
+
+ROC-AUC measures how well model scores discriminate between positive and negative examples across classification thresholds. It is suitable for this task because the model produces engagement scores, and the experiment is concerned with ranking quality rather than selecting one fixed classification threshold.
+
+A ROC-AUC of 0.5 corresponds to random discrimination under the usual interpretation, while higher values indicate stronger discrimination.
+
+The dataset has an observed positive-label rate of approximately 8.42\%. ROC-AUC provides a threshold-independent discrimination metric, but it does not fully describe performance on an imbalanced dataset. PR-AUC could provide complementary information in a future evaluation; it is not reported as a result of this PoC.
+
+Importantly, the measured ROC-AUC describes predictive discrimination on the observed evaluation exposures. It is not equivalent to causal policy value, complete counterfactual ranking quality, or production recommendation success.
+
+\subsection{Why use validation AUC to choose $K$?}
+The history budget is selected by comparing validation ROC-AUC against the Full reference.
+
+Let:
+\begin{itemize}
+    \item $A_{\mathrm{val}}(K)$ be the validation ROC-AUC for budget $K$;
+    \item $A_{\mathrm{val}}(\mathrm{Full})$ be the validation ROC-AUC for Full;
+    \item $\epsilon$ be the maximum allowed decrease.
+\end{itemize}
+The selection rule is:
+\begin{equation}
+K^* = \min \left\{ K : A_{\mathrm{val}}(K) \geq A_{\mathrm{val}}(\mathrm{Full}) - \epsilon \right\}
+\end{equation}
+The PoC uses:
+\begin{equation}
+\epsilon = 0.05
+\end{equation}
+Since the Full validation AUC is 0.659740, the minimum acceptable validation AUC is:
+\begin{equation}
+0.659740 - 0.05 = 0.609740
+\end{equation}
+This rule is a simple, interpretable constraint-based selection method. It identifies the smallest tested budget that satisfies a predefined quality tolerance.
+
+The value $\epsilon = 0.05$ is a design choice for this PoC, not a universally established acceptable loss in recommendation quality.
+
+\subsection{Why use validation rather than test AUC for selection?}
+Using test AUC to choose the history budget would allow the final evaluation data to influence the policy decision.
+
+The implementation therefore selects $K$ using validation AUC and reports test AUC afterward as an evaluation result. This separates the budget-selection rule from the final reported test performance.
+
+\subsection{Engineering metrics}
+In addition to ROC-AUC, the PoC reports three measurements:
+\begin{itemize}
+    \item \textbf{Total history interactions:} The total number of stored history entries across the 43,027 evaluation requests. This directly measures the history volume represented by each configuration.
+    \item \textbf{Mean interactions per request:} 
+    \begin{equation}
+    \frac{\text{Total history interactions}}{\text{Number of requests}}
+    \end{equation}
+    This provides an interpretable estimate of the average history length.
+    \item \textbf{Local history-processing time:} The benchmark reads the Parquet history column in batches of 256, converts each batch to Python lists, and counts the contained interactions. The elapsed time includes reading and processing the selected history column. This measurement is used as a local proxy for the cost of processing history data. It is not a measurement of complete model inference latency or serverless execution cost.
+\end{itemize}
+
+\section{Experimental Results}
+\subsection{History-budget selection}
+The existing validation results are:
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{K} & \textbf{Validation ROC-AUC} & \textbf{Meets threshold?} \\
+\midrule
+0 & 0.590352 & No \\
+1 & 0.507195 & No \\
+5 & 0.543251 & No \\
+10 & 0.558826 & No \\
+20 & 0.578821 & No \\
+50 & 0.598103 & No \\
+100 & 0.611039 & Yes \\
+Full & 0.659740 & Yes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The $K = 50$ configuration does not reach the required threshold of 0.609740. The $K = 100$ configuration reaches 0.611039 and therefore satisfies the selection rule.
+
+Consequently, $K = 100$ is the smallest tested history budget satisfying the validation constraint.
+
+\subsection{Predictive performance}
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Metric} & \textbf{K = 100} & \textbf{Full} \\
+\midrule
+Validation ROC-AUC & 0.611039 & 0.659740 \\
+Test ROC-AUC & 0.579012 & 0.614246 \\
+Test AUC gap relative to Full & 0.035234 & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The validation AUC gap for $K = 100$ is:
+\begin{equation}
+0.659740 - 0.611039 = 0.048701
+\end{equation}
+This is smaller than the allowed decrease of 0.05, which explains why the configuration is selected.
+
+On the test set, the AUC gap is:
+\begin{equation}
+0.614246 - 0.579012 = 0.035234
+\end{equation}
+Thus, the selected configuration retains useful predictive discrimination but performs worse than Full on the reported test AUC. The policy satisfies the chosen validation constraint; it does not establish predictive equivalence between $K = 100$ and Full.
+
+\subsection{History-volume comparison}
+The history-processing artifacts contain the following totals:
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Metric} & \textbf{K = 100} & \textbf{Full} \\
+\midrule
+Evaluation requests & 43,027 & 43,027 \\
+Total history interactions & 4,079,877 & 24,721,035 \\
+Mean interactions per request & 94.82 & 574.55 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The reduction is calculated as:
+\begin{equation}
+\left( 1 - \frac{N_{100}}{N_{\mathrm{Full}}} \right) \times 100\%
+\end{equation}
+Substituting the observed totals:
+\begin{equation}
+\left( 1 - \frac{4,079,877}{24,721,035} \right) \times 100\% \approx 83.50\%
+\end{equation}
+Therefore, the $K = 100$ artifacts contain approximately 83.50\% fewer history interactions than the Full artifacts for the same set of evaluation requests.
+
+This is a direct measurement of history volume. It should not be interpreted as an equivalent reduction in RAM usage, energy consumption, or total system cost.
+
+\subsection{Repeated runtime benchmark}
+The benchmark was run four times for each configuration, alternating execution order between $K = 100$ and Full.
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Runtime statistic} & \textbf{K = 100} & \textbf{Full} \\
+\midrule
+Number of runs & 4 & 4 \\
+Minimum time & 0.498 s & 2.864 s \\
+Median time & 0.512 s & 2.895 s \\
+Maximum time & 0.530 s & 3.029 s \\
+Time range & 0.032 s & 0.165 s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The median runtime reduction is:
+\begin{equation}
+\left( 1 - \frac{T_{100}}{T_{\mathrm{Full}}} \right) \times 100\% = \left( 1 - \frac{0.512}{2.895} \right) \times 100\% \approx 82.31\%
+\end{equation}
+The median Full processing time is approximately 5.65 times the median $K = 100$ processing time.
+
+The four measurements show relatively small ranges for both configurations. Nevertheless, operating-system caching, execution order, and background system activity may affect the results. Four runs are sufficient for an initial PoC comparison, but they do not establish a universal runtime improvement.
+
+\subsection{Consolidated comparison}
+\begin{table}[htbp]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Dimension} & \textbf{K = 100} & \textbf{Full} \\
+\midrule
+Validation ROC-AUC & 0.611039 & 0.659740 \\
+Test ROC-AUC & 0.579012 & 0.614246 \\
+History interactions & 4,079,877 & 24,721,035 \\
+Median local processing time & 0.512 s & 2.895 s \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The results reveal a trade-off. Limiting history substantially reduces the number of interactions that must be processed and reduces measured local history-processing time, but it also decreases test predictive performance.
+
+\section{Discussion}
+\subsection{What the PoC demonstrates}
+The PoC demonstrates that a validation-AUC-based rule can select a smaller history budget from a predefined set of configurations.
+
+For the current baseline, the selected budget is $K = 100$. Compared with Full, it reduces the stored history interactions by 83.50\%, while satisfying the validation AUC tolerance specified in advance.
+
+The repeated local benchmark also shows that processing the smaller history artifacts takes less time under the tested conditions.
+
+Together, these results provide initial evidence that history-budget selection is a practical direction for investigating the relationship between predictive quality and history-processing requirements.
+
+\subsection{What the results do not demonstrate}
+The measured runtime reduction must not be interpreted as an 82.31\% reduction in serverless latency or cost.
+
+The benchmark measures reading, decoding, and iterating through the stored history column on a local machine. It does not include a complete recommendation request, model inference, network access, function initialization, or serverless resource billing.
+
+Similarly, the 83.50\% reduction in history interactions does not imply an identical reduction in memory usage or energy consumption.
+
+\subsection{Why the current policy is global rather than fully adaptive}
+The current policy chooses one budget from the baseline validation results and applies that budget globally. It does not compute a different $K$ for each user or request.
+
+Therefore, the implementation is best described as a global history-budget selection policy. Although it supports the broader motivation of adaptive behavioral history management, it is not yet a per-user or per-request adaptive system.
+
+This distinction is important when interpreting the scope and contribution of the current PoC.
+
+\section{Limitations}
+The current implementation has the following limitations:
+\begin{enumerate}
+    \item \textbf{Simple baseline architecture:} The model uses video embeddings, masked mean pooling, and an MLP. It does not explicitly model sequential order or long-range temporal dependencies.
+    \item \textbf{Single history-window configuration:} The benchmark uses a one-day history window and a maximum Full length of 2,048 interactions. Other windows and truncation settings have not been compared in this PoC.
+    \item \textbf{Existing baseline results:} The reported AUC values are reused from existing training artifacts. The runtime benchmark does not retrain models or independently reproduce their predictive metrics.
+    \item \textbf{Limited runtime measurements:} Each configuration has four local benchmark runs. The results may be affected by caching and local machine conditions.
+    \item \textbf{No serverless deployment:} No actual serverless function execution, cold-start or warm-start experiment, autoscaling test, or billing-based cost measurement has been conducted.
+    \item \textbf{No energy measurement:} The PoC does not measure electrical energy or establish energy savings.
+    \item \textbf{No per-request adaptation:} The selected budget is global rather than dynamically determined from each user's or request's characteristics.
+    \item \textbf{Evaluation scope:} ROC-AUC measures discrimination on observed intervention exposures. It does not establish causal effects or complete counterfactual recommendation-policy quality.
+    \item \textbf{Split-generation documentation:} The inspected Phase 8 artifacts provide the sizes of the train, validation, and test splits. The exact split-generation procedure should be verified before describing the split as chronological.
+    \item \textbf{Baseline dependence:} The selected budget depends on the current model, dataset, evaluation protocol, and chosen tolerance $\epsilon = 0.05$. It should not be assumed to be optimal for other models or datasets.
+\end{enumerate}
+These limitations define the boundary between the implemented PoC and a more complete research system.
+
+\section{Conclusion}
+This proof of concept investigates the feasibility of reducing behavioral-history processing requirements in short-video recommendation while maintaining a predefined level of predictive performance.
+
+Using existing KuaiRand-1K artifacts and baseline evaluation results, the implemented selection rule identifies $K = 100$ as the smallest tested history budget satisfying the validation ROC-AUC constraint with $\epsilon = 0.05$.
+
+Across 43,027 evaluation requests, the selected configuration contains 4,079,877 history interactions, compared with 24,721,035 for Full, corresponding to an 83.50\% reduction. A repeated local streaming benchmark records median processing times of 0.512 seconds and 2.895 seconds, respectively, corresponding to an 82.31\% reduction in the measured operation.
+
+The test ROC-AUC for $K = 100$ is 0.579012, compared with 0.614246 for Full. The results therefore demonstrate a trade-off rather than an unconditional improvement: the smaller history reduces the amount of data processed and the measured local processing time, while predictive discrimination decreases.
+
+Overall, the PoC provides a reproducible starting point for studying history-budget selection. Its results support further investigation but do not yet establish serverless cost savings, energy savings, or per-request adaptive behavior.
+
+\appendix
+\section{Key Implementation Artifacts}
+The following repository artifacts are relevant to reproducing or extending the PoC:
+\begin{itemize}
+    \item \texttt{src/data/build\_history\_configs.py} --- reconstructs the one-day history and derives history-budget configurations.
+    \item \texttt{data/processed/phase7/history\_config.yaml} --- records the history window, maximum history length, and tested budgets.
+    \item \texttt{src/models/baseline\_models.py} --- defines the baseline embedding, mean-pooling, and MLP architecture.
+    \item \texttt{src/models/train\_baseline.py} --- defines the baseline training procedure.
+    \item \texttt{data/processed/phase8/baseline\_results.csv} --- stores the existing baseline AUC results.
+    \item \texttt{src/policy/adaptive\_policy.py} --- implements the validation-AUC-based global history-budget selection policy.
+    \item \texttt{src/policy/benchmark\_history.py} --- measures one streaming pass over the selected history column.
+    \item \texttt{src/policy/benchmark\_history\_repeated.py} --- runs the repeated local benchmark.
+    \item \texttt{src/policy/build\_tradeoff\_table.py} --- combines predictive, history-volume, and runtime results.
+    \item \texttt{data/processed/phase8/adaptive\_policy\_summary.csv} --- stores the policy summary.
+    \item \texttt{data/processed/phase8/runtime\_benchmark.csv} --- stores the initial single-pass benchmark results.
+    \item \texttt{data/processed/phase8/runtime\_benchmark\_repeated.csv} --- stores the individual repeated benchmark runs.
+    \item \texttt{data/processed/phase8/runtime\_benchmark\_summary.csv} --- stores the repeated benchmark summary.
+    \item \texttt{data/processed/phase8/tradeoff\_summary.csv} --- stores the consolidated trade-off table.
+\end{itemize}
+
+\section{Main Equations}
+\noindent\textbf{Validation-constrained history-budget selection:}
+\begin{equation}
+K^* = \min \left\{ K : A_{\mathrm{val}}(K) \geq A_{\mathrm{val}}(\mathrm{Full}) - \epsilon \right\}
+\end{equation}
+
+\noindent\textbf{Masked mean pooling:}
+\begin{equation}
+\frac{\sum_j m_j \mathbf{e}_j}{\max(1, \sum_j m_j)}
+\end{equation}
+
+\noindent\textbf{History-interaction reduction:}
+\begin{equation}
+\left(1 - \frac{N_{100}}{N_{\mathrm{Full}}}\right) \times 100\%
+\end{equation}
+
+\noindent\textbf{Local processing-time reduction:}
+\begin{equation}
+\left(1 - \frac{T_{100}}{T_{\mathrm{Full}}}\right) \times 100\%
+\end{equation}
+
+\end{document}

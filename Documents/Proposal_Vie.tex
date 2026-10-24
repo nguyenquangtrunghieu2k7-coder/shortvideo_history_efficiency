@@ -1,0 +1,401 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T5]{fontenc}
+\usepackage[utf8]{vietnam}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{graphicx}
+
+\title{\textbf{Quản lý Lịch sử Hành vi Thích ứng cho Hệ thống Gợi ý Video Ngắn Hiệu quả Tài nguyên trong Môi trường Serverless}}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Bối cảnh và Động lực}
+
+Các hệ thống gợi ý video ngắn phụ thuộc nhiều vào lịch sử tương tác của người dùng để dự đoán sở thích và chọn lọc nội dung phù hợp. Trong hệ thống gợi ý chuỗi (sequential recommendation), thứ tự và tính phụ thuộc giữa các tương tác trong quá khứ của người dùng là nguồn thông tin quan trọng để mô hình hóa sở thích người dùng, và các nghiên cứu gần đây đã khám phá các chuỗi hành vi ngày càng dài cũng như các phương pháp tiếp cận lấy dữ liệu làm trung tâm (data-centric) cho hệ thống gợi ý.
+
+Nhìn chung, việc cung cấp nhiều lịch sử hành vi hơn cho mô hình gợi ý có thể mang lại thông tin phong phú hơn về sở thích của người dùng. Tuy nhiên, việc xử lý các lịch sử dài hơn cũng đặt ra các yêu cầu bổ sung về tài nguyên, bao gồm quá trình truy xuất dữ liệu, truy cập lưu trữ, truyền tải dữ liệu, tiền xử lý, trích xuất đặc trưng, sử dụng bộ nhớ và suy luận mô hình. Do đó, việc sử dụng toàn bộ lịch sử hiện có không phải lúc nào cũng cần thiết khi các tương tác lịch sử bổ sung chỉ mang lại sự cải thiện hạn chế về hiệu suất gợi ý.
+
+Vấn đề này trở nên đặc biệt quan trọng trong môi trường điện toán không máy chủ (serverless computing). Trong kiến trúc serverless, quá trình tính toán được thực thi thông qua các hàm chạy theo yêu cầu (on-demand functions), trong khi dữ liệu có thể cần được truy xuất từ bộ lưu trữ bên ngoài hoặc từ xa cho mỗi yêu cầu. Do đó, lượng dữ liệu được truy cập và truyền tải có thể ảnh hưởng trực tiếp đến thời gian thực thi hàm, số lượng yêu cầu lưu trữ, mức tiêu thụ bộ nhớ và chi phí tính toán.
+
+Điều này dẫn đến một câu hỏi về quản lý dữ liệu:
+
+\begin{quote}
+\textit{Thay vì luôn truy xuất và xử lý lượng dữ liệu hành vi tối đa hiện có, liệu hệ thống có thể xác định được lượng lịch sử thực sự hữu ích cho một tác vụ gợi ý nhất định hay không?}
+\end{quote}
+
+Dự án này được thúc đẩy bởi hướng nghiên cứu EDAM (Quản lý dữ liệu nhận thức năng lượng - Energy-aware DAta Management), trong đó xem xét các quyết định quản lý dữ liệu cùng với các hệ quả về tính toán và tài nguyên của chúng.
+
+Dự án cũng được tinh chỉnh dựa trên các ý tưởng trình bày trong nghiên cứu BLOOM-FaaS. BLOOM-FaaS chứng minh việc sử dụng bộ lọc sớm để loại bỏ dữ liệu không cần thiết trước khi tiến hành quá trình xử lý tốn kém trong môi trường serverless. Nghiên cứu này cũng sử dụng thông tin thời gian chạy (runtime) để điều chỉnh các quyết định thực thi. Quan trọng hơn, nghiên cứu cho thấy bản thân việc lọc dữ liệu cũng tạo ra chi phí phụ (overhead) và chỉ có lợi khi mức độ giảm tải cho các quá trình xử lý tiếp theo lớn hơn chi phí phụ này.
+
+Tuân theo nguyên lý chung này, dự án này điều tra xem liệu lịch sử hành vi có thể được coi là một tài nguyên dữ liệu được quản lý thích ứng (adaptively managed data resource) hay không: dữ liệu lịch sử bổ sung chỉ nên được truy xuất và xử lý khi lợi ích gợi ý kỳ vọng của nó bù đắp được chi phí tài nguyên tăng thêm.
+
+Do đó, dự án giữ lại hướng nghiên cứu định hướng gợi ý ban đầu, đồng thời tinh chỉnh nó theo một góc nhìn rộng hơn về quản lý dữ liệu serverless.
+
+\section{Câu hỏi Nghiên cứu}
+
+\subsection*{Câu hỏi Nghiên cứu Chính}
+Làm thế nào để quản lý lịch sử hành vi một cách thích ứng trong một workload gợi ý chạy trên môi trường serverless nhằm tối ưu sự đánh đổi giữa chất lượng gợi ý và chi phí tài nguyên?
+
+Câu hỏi nghiên cứu chính được chia nhỏ thành các câu hỏi phụ sau:
+
+\begin{description}
+    \item[RQ1. Tác động của lịch sử hành vi:] Lượng lịch sử hành vi ảnh hưởng như thế nào đến chất lượng gợi ý trong môi trường học có giám sát?\\
+    Câu hỏi này thiết lập mối quan hệ giữa lượng dữ liệu hành vi lịch sử được sử dụng làm đầu vào cho mô hình và hiệu suất dự đoán thu được. Tác vụ ban đầu sẽ được định dạng như một bài toán học có giám sát phân loại nhị phân sử dụng nhãn \texttt{long\_view} trong tập dữ liệu KuaiRand, trong đó mô hình dự đoán liệu người dùng có tương tác xem lâu (long-view) với một video được gợi ý hay không.
+
+    \item[RQ2. Chi phí tài nguyên và tính toán:] Lượng lịch sử hành vi ảnh hưởng như thế nào đến chi phí tài nguyên của một yêu cầu gợi ý?\\
+    Phân tích sẽ xem xét không chỉ quá trình tính toán mà còn cả chi phí quản lý dữ liệu liên quan đến việc xử lý lịch sử, bao gồm:
+    \begin{itemize}
+        \item lượng dữ liệu được truy xuất;
+        \item truy cập lưu trữ;
+        \item dữ liệu được truyền tải;
+        \item khối lượng công việc tiền xử lý;
+        \item độ trễ suy luận;
+        \item mức sử dụng bộ nhớ;
+        \item khối lượng công việc tính toán;
+        \item và, nếu có hạ tầng đo lường đáng tin cậy, mức tiêu thụ năng lượng.
+    \end{itemize}
+
+    \item[RQ3. Điều kiện chi phí - lợi ích:] Trong điều kiện nào thì lượng lịch sử hành vi bổ sung mang lại đủ lợi ích gợi ý để biện minh cho chi phí tài nguyên tăng thêm?\\
+    Câu hỏi này điều tra lợi ích cận biên (marginal benefit) của việc xử lý thêm lịch sử so với chi phí cận biên (marginal cost) của nó.
+
+    \item[RQ4. Quản lý dữ liệu thích ứng:] Liệu một chiến lược quản lý lịch sử thích ứng có thể giảm lượng dữ liệu được xử lý và chi phí tài nguyên tương ứng trong khi vẫn duy trì mức chất lượng gợi ý có thể chấp nhận được không?\\
+    Câu hỏi này điều tra xem các quan sát từ RQ1-RQ3 có thể được chuyển đổi thành một cơ chế quản lý dữ liệu thực tế hay không.
+\end{description}
+
+\section{Mục tiêu}
+
+Dự án có bốn mục tiêu chính.
+
+\subsection*{Mục tiêu 1 - Định lượng giá trị của lịch sử hành vi}
+Đo lường cách hiệu suất gợi ý thay đổi khi cung cấp cho mô hình các lượng lịch sử hành vi gần đây khác nhau. Các thí nghiệm ban đầu sẽ xem xét:
+\[ K \in \{0, 1, 5, 10, 20, 50, 100, \text{Đầy đủ (Full)}\} \]
+trong đó $K$ đại diện cho số lượng tương tác hành vi gần đây được truy xuất và xử lý cho một yêu cầu gợi ý. 
+Mục tiêu không phải là phát triển một kiến trúc gợi ý tiên tiến (state-of-the-art) mới. Thay vào đó, cùng một kiến trúc mô hình tổng thể và giao thức thí nghiệm sẽ được sử dụng để cô lập tác động của lượng dữ liệu hành vi.
+
+\subsection*{Mục tiêu 2 - Định lượng các hệ quả về quản lý dữ liệu và tính toán}
+Đo lường cách việc tăng $K$ ảnh hưởng đến các tài nguyên cần thiết cho một yêu cầu gợi ý, bao gồm:
+\begin{itemize}
+    \item dữ liệu hành vi được truy xuất;
+    \item truy cập lưu trữ;
+    \item truyền tải dữ liệu;
+    \item khối lượng công việc tiền xử lý;
+    \item độ trễ suy luận;
+    \item mức sử dụng bộ nhớ;
+    \item khối lượng công việc tính toán;
+    \item và, nếu có hạ tầng đo lường đáng tin cậy, mức tiêu thụ năng lượng.
+\end{itemize}
+Tiêu thụ năng lượng sẽ được xem như một khía cạnh đánh giá bổ sung chứ không phải là yêu cầu bắt buộc nếu môi trường thí nghiệm không hỗ trợ đo lường đáng tin cậy.
+
+\subsection*{Mục tiêu 3 - Xác định mối quan hệ chất lượng - chi phí}
+Phân tích lợi ích gợi ý cận biên thu được từ dữ liệu lịch sử hành vi bổ sung so với chi phí tài nguyên bổ sung.
+Đối với hai cấu hình lịch sử $K_1$ và $K_2$:
+\[ \Delta Q = Q(K_2) - Q(K_1) \]
+đại diện cho lợi ích gợi ý bổ sung, trong khi
+\[ \Delta C = C(K_2) - C(K_1) \]
+đại diện cho chi phí tài nguyên/tính toán bổ sung.
+Dự án sẽ điều tra mối quan hệ giữa $\Delta Q$ và $\Delta C$ để xác định các vùng mà việc thêm lịch sử mang lại hiệu quả giảm dần (diminishing returns).
+
+\subsection*{Mục tiêu 4 - Phát triển chiến lược quản lý lịch sử thích ứng}
+Dựa trên phân tích trước đó, thiết kế một cơ chế đơn giản và có khả năng diễn giải để xác định lượng lịch sử hành vi cần được truy xuất và xử lý cho một yêu cầu gợi ý.
+
+Vòng lặp ra quyết định ban đầu là:
+\begin{center}
+Quan sát $\rightarrow$ Ước tính Lợi ích/Chi phí $\rightarrow$ Chọn Lịch sử $\rightarrow$ Truy xuất/Xử lý $\rightarrow$ Gợi ý
+\end{center}
+
+Hệ thống nên tránh truy xuất và xử lý thêm lịch sử khi lợi ích gợi ý kỳ vọng không đủ so với chi phí tài nguyên tương ứng.
+
+\section{Các nghiên cứu liên quan và Bối cảnh Nghiên cứu}
+
+\subsection{Gợi ý Chuỗi và Gợi ý Video Ngắn}
+Gợi ý chuỗi đã trở thành một hướng nghiên cứu quan trọng vì sở thích của người dùng có thể phụ thuộc vào thứ tự và sự phụ thuộc giữa các tương tác lịch sử. Các bài tổng quan gần đây chỉ ra một số hướng đi đang được quan tâm, bao gồm gợi ý chuỗi cực dài và gợi ý chuỗi lấy dữ liệu làm trung tâm.
+
+Nghiên cứu về gợi ý video cũng bao gồm các mô hình ngày càng tinh vi để lập mô hình hành vi người dùng, dự đoán thời gian xem, thông tin đa phương thức, và hệ thống gợi ý quy mô công nghiệp. Các nghiên cứu gần đây về gợi ý video ngắn, chẳng hạn, khám phá việc mô hình hóa hành vi xem trong quá khứ của người dùng để cải thiện khả năng dự đoán thời gian xem.
+
+Tuy nhiên, mục tiêu của dự án này khác với việc phát triển một kiến trúc gợi ý mới. Dự án tập trung vào khía cạnh quản lý dữ liệu của hệ thống gợi ý:
+\begin{quote}
+\textit{Nên thực sự truy xuất và xử lý bao nhiêu dữ liệu lịch sử cho một yêu cầu gợi ý, và chi phí tài nguyên của quyết định đó là bao nhiêu?}
+\end{quote}
+Điều này cung cấp một góc nhìn bổ sung cho các nghiên cứu gợi ý lấy mô hình làm trung tâm.
+
+\subsection{Quản lý Dữ liệu Serverless}
+Điện toán serverless giới thiệu một mô hình thực thi khác với các máy chủ chạy liên tục truyền thống. Các hàm được gọi theo yêu cầu, trong khi dữ liệu ứng dụng có thể được lưu trữ tách biệt với tài nguyên tính toán.
+
+Hậu quả là, việc xử lý dữ liệu không cần thiết không chỉ dẫn đến tăng khối lượng tính toán mà còn gây thêm chi phí truy cập lưu trữ, truyền tải dữ liệu, thực thi hàm và yêu cầu bộ nhớ. Điều này làm cho việc giảm thiểu dữ liệu và các quyết định xử lý thích ứng trở nên đặc biệt quan trọng.
+
+\subsection{BLOOM-FaaS như một nguồn Cảm hứng về Phương pháp luận}
+BLOOM-FaaS cung cấp một ví dụ cụ thể về việc giảm thiểu dữ liệu thích ứng trong xử lý dữ liệu serverless. Nó sử dụng các Bộ lọc Bloom (Bloom Filters) để lọc dữ liệu không cần thiết trước quá trình xử lý join (kết nối) tốn kém và sử dụng thông tin thời gian chạy để điều chỉnh các quyết định thực thi. Đánh giá được báo cáo xem xét dữ liệu trung gian, số lần gọi hàm, yêu cầu lưu trữ, thời gian thực thi và chi phí tiền tệ.
+
+Dự án hiện tại không nhằm mục đích tái tạo lại BLOOM-FaaS hoặc trực tiếp áp dụng Bloom Filters cho hệ thống gợi ý. Thay vào đó, dự án áp dụng một nguyên tắc rộng hơn:
+\begin{quote}
+\textit{Giảm hoặc tránh xử lý dữ liệu không cần thiết khi lượng tài nguyên tiết kiệm dự kiến bù đắp được chi phí phụ (overhead) của việc đưa ra quyết định.}
+\end{quote}
+Nguyên tắc này được chuyển đổi từ việc xử lý join trong môi trường serverless sang quản lý lịch sử hành vi trong hệ thống gợi ý.
+
+\section{Phương pháp Nghiên cứu}
+
+\subsection{Workload Thử nghiệm: KuaiRand}
+Workload ban đầu vẫn sẽ là tập dữ liệu gợi ý video ngắn KuaiRand. KuaiRand chứa lịch sử tương tác giữa người dùng và video, đồng thời cung cấp một môi trường thí nghiệm có sự can thiệp ngẫu nhiên (random intervention), làm cho nó phù hợp với các thí nghiệm gợi ý ngoại tuyến (offline) có kiểm soát. Mục tiêu dự đoán chính là \texttt{long\_view}, được định dạng dưới dạng một bài toán học có giám sát phân loại nhị phân.
+
+Các phát triển và thí nghiệm ban đầu sẽ sử dụng KuaiRand-1K. Nếu phương pháp luận chứng tỏ tính khả thi và tài nguyên tính toán cho phép, các thí nghiệm sau đó có thể được mở rộng sang KuaiRand-27K. Luồng dữ liệu (data pipeline) hiện có và công việc kiểm soát rò rỉ dữ liệu (leakage-control) từ đề xuất ban đầu sẽ được giữ lại và tinh chỉnh thay vì xây dựng lại từ đầu.
+
+\subsection{Bước 1 - Baseline Lịch sử Cố định}
+Giai đoạn đầu tiên thiết lập một baseline (đường cơ sở) có kiểm soát bằng cách huấn luyện và đánh giá các mô hình sử dụng các lượng lịch sử hành vi cố định khác nhau:
+\[ K \in \{0, 1, 5, 10, 20, 50, 100, \text{Đầy đủ (Full)}\} \]
+Đối với mỗi $K$:
+\begin{itemize}
+    \item kiến trúc mô hình tổng thể giữ nguyên;
+    \item giao thức huấn luyện/đánh giá giữ nguyên;
+    \item mục tiêu vẫn là \texttt{long\_view};
+    \item chỉ thay đổi lượng lịch sử hành vi.
+\end{itemize}
+
+\textbf{Thước đo chất lượng gợi ý:} Thước đo chính sẽ là ROC-AUC (Đặc tuyến hoạt động của bộ thu - Diện tích dưới đường cong). ROC-AUC đo lường khả năng phân biệt giữa các mẫu dương tính và âm tính của một bộ phân loại nhị phân trên các ngưỡng phân loại khác nhau. Nó phù hợp ở đây vì \texttt{long\_view} được xây dựng như một mục tiêu học có giám sát nhị phân. Các thước đo bổ sung như log loss cũng có thể được xem xét.
+
+Thí nghiệm này trả lời câu hỏi: \textit{Có thể thu được bao nhiêu thông tin dự đoán từ các lượng lịch sử hành vi khác nhau?}
+
+\subsection{Bước 2 - Phân tích Quản lý Dữ liệu và Chi phí Tài nguyên}
+Đối với mỗi độ dài lịch sử $K$, dự án sẽ đo lường cả chất lượng gợi ý và yêu cầu tài nguyên. Kết quả có thể được biểu diễn dưới dạng:
+\[ K \rightarrow (\text{Chất lượng Gợi ý, Chi phí Dữ liệu, Chi phí Tính toán}) \]
+
+Phân tích sẽ xem xét:
+
+\begin{table}[h]
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Lịch sử} & \textbf{Chất lượng} & \textbf{Dữ liệu được truy xuất} & \textbf{Truy cập Lưu trữ} & \textbf{Chuyển Dữ liệu} & \textbf{Độ trễ} & \textbf{Bộ nhớ} \\
+\midrule
+$K = 0$ & đã đo & đã đo & đã đo & đã đo & đã đo & đã đo \\
+$K = 1$ & đã đo & đã đo & đã đo & đã đo & đã đo & đã đo \\
+$K = 5$ & đã đo & đã đo & đã đo & đã đo & đã đo & đã đo \\
+$K = 10$ & đã đo & đã đo & đã đo & đã đo & đã đo & đã đo \\
+$K = 20$ & đã đo & đã đo & đã đo & đã đo & đã đo & đã đo \\
+$K = 50$ & đã đo & đã đo & đã đo & đã đo & đã đo & đã đo \\
+$K = 100$ & đã đo & đã đo & đã đo & đã đo & đã đo & đã đo \\
+Full & đã đo & đã đo & đã đo & đã đo & đã đo & đã đo \\
+\bottomrule
+\end{tabular}
+}
+\end{table}
+
+Mục đích là để mô tả sự đánh đổi giữa chất lượng và tài nguyên thay vì chỉ đơn giản là xác định cấu hình có AUC cao nhất.
+
+\subsection{Bước 3 - Quản lý Lịch sử Serverless}
+Dự án sẽ điều tra xem luồng xử lý lịch sử hành vi có thể được biểu diễn như một workload quản lý dữ liệu serverless như thế nào.
+
+Một luồng yêu cầu được đơn giản hóa là:
+\begin{center}
+Yêu cầu Gợi ý \\
+$\downarrow$ \\
+Xác định Lịch sử Yêu cầu \\
+$\downarrow$ \\
+Truy xuất Lịch sử từ Lưu trữ \\
+$\downarrow$ \\
+Lọc / Chọn Lịch sử Liên quan \\
+$\downarrow$ \\
+Truyền tới Hàm Serverless \\
+$\downarrow$ \\
+Tiền xử lý và Mã hóa \\
+$\downarrow$ \\
+Mô hình Gợi ý \\
+$\downarrow$ \\
+Dự đoán
+\end{center}
+
+Góc nhìn này khiến độ dài lịch sử $K$ trở thành một quyết định quản lý dữ liệu, thay vì chỉ là một siêu tham số (hyperparameter) của mô hình. Ví dụ, việc tăng $K$ có thể cải thiện chất lượng dự đoán, nhưng cũng có thể làm tăng lượng dữ liệu được truy xuất từ bộ lưu trữ, truy cập lưu trữ, truyền tải dữ liệu, tiền xử lý, thời gian thực thi hàm, và yêu cầu bộ nhớ.
+
+Do đó, hệ thống nên xác định xem lịch sử bổ sung có đáng để truy xuất và xử lý hay không. Quá trình triển khai ban đầu sẽ ưu tiên một nguyên mẫu serverless nhỏ gọn, có khả năng tái tạo thay vì cố gắng xây dựng lại một nền tảng gợi ý serverless quy mô thực tế (production-scale).
+
+\subsection{Bước 4 - Phân tích Lợi ích và Chi phí Cận biên}
+Đối với các cấu hình lịch sử liền kề:
+\[ K_1 \rightarrow K_2 \]
+dự án sẽ ước tính:
+\[ \Delta Q = Q(K_2) - Q(K_1) \]
+và
+\[ \Delta C = C(K_2) - C(K_1) \]
+
+Phân tích sẽ xem xét lượng lợi ích gợi ý bổ sung đạt được trên mỗi đơn vị chi phí tài nguyên bổ sung. Điều này có thể nhận diện các tình huống như:
+\begin{itemize}
+    \item Tăng lịch sử từ $K=20$ lên $K=50$ mang lại sự cải thiện đáng kể.
+    \item Nhưng: Tăng lịch sử từ $K=100$ lên Full chỉ mang lại một cải thiện nhỏ trong khi đòi hỏi xử lý dữ liệu nhiều hơn đáng kể.
+\end{itemize}
+Các vùng có hiệu quả giảm dần như vậy cung cấp cơ sở cho việc quản lý lịch sử thích ứng.
+
+\subsection{Bước 5 - Quản lý Lịch sử Thích ứng}
+Dựa trên các thí nghiệm trước, một cơ chế thích ứng có tính diễn giải sẽ được thiết kế. Một quy trình ra quyết định ở mức khái niệm là:
+
+\begin{center}
+Yêu cầu Hiện tại \\
+$\downarrow$ \\
+Lịch sử Hiện tại $K$ \\
+$\downarrow$ \\
+Ước tính Lợi ích Bổ sung + Ước tính Chi phí Tài nguyên Bổ sung \\
+$\downarrow$ \\
+Lịch sử Bổ sung có đáng với Chi phí bỏ ra không? \\
+(Có $\rightarrow$ Tăng $K$, Không $\rightarrow$ Giữ nguyên $K$) \\
+$\searrow \quad \swarrow$ \\
+Gợi ý
+\end{center}
+
+Lần triển khai đầu tiên sẽ không giới thiệu một bộ điều khiển dựa trên học máy phức tạp. Thay vào đó, nó sẽ điều tra các tiêu chí quyết định đơn giản dựa trên mối quan hệ chất lượng - chi phí đo được bằng thực nghiệm.
+
+Ví dụ, lịch sử bổ sung có thể chỉ được chọn khi:
+\[ \frac{\text{lợi ích gợi ý cận biên ước tính}}{\text{chi phí tài nguyên cận biên}} > \text{ngưỡng xác định trước} \]
+Các ngưỡng khác nhau sau đó có thể được đánh giá bằng thực nghiệm.
+
+\subsection{Mở rộng Tùy chọn cho TPC-H}
+Để điều tra xem liệu nguyên lý quản lý dữ liệu được đề xuất có đặc thù riêng cho hệ thống gợi ý hay có thể khái quát hóa cho các workload xử lý dữ liệu serverless khác, TPC-H có thể được xem xét như một benchmark thứ cấp. TPC-H là một benchmark hỗ trợ ra quyết định tiêu chuẩn chứa dữ liệu quan hệ và các truy vấn phân tích.
+
+Bản mở rộng tiềm năng là:
+\begin{center}
+Quản lý Dữ liệu Serverless $\rightarrow$ Chiến lược Giảm thiểu / Lựa chọn Dữ liệu $\rightarrow$ Workload phân tích TPC-H $\rightarrow$ Chi phí Dữ liệu đã xử lý / Lưu trữ / Truyền tải / Thực thi
+\end{center}
+
+Tuy nhiên, TPC-H sẽ được coi là một phần mở rộng phụ hoặc tùy chọn, tùy thuộc vào phạm vi dự án, cơ sở hạ tầng và định hướng. Việc triển khai chính vẫn sẽ là workload gợi ý KuaiRand để đảm bảo dự án vẫn khả thi và xây dựng trực tiếp trên các công việc hiện có.
+
+\section{Đánh giá}
+
+Chiến lược thích ứng sẽ được so sánh với các baseline có lịch sử cố định. Các khía cạnh đánh giá chính là:
+
+\begin{itemize}
+    \item \textbf{Chất lượng gợi ý:} ROC-AUC, có thể là log loss.
+    \item \textbf{Chi phí quản lý dữ liệu:} lượng dữ liệu được truy xuất, truy cập lưu trữ, lượng dữ liệu được truyền tải, lượng dữ liệu được xử lý.
+    \item \textbf{Chi phí tính toán:} thời gian thực thi hàm serverless, độ trễ từ đầu đến cuối, sử dụng bộ nhớ, khối lượng công việc tính toán, số lần gọi hàm nếu áp dụng.
+    \item \textbf{Hiệu quả tài nguyên:} chất lượng đạt được trên mỗi đơn vị chi phí tài nguyên, tùy chọn đánh giá tiêu thụ năng lượng khi có hạ tầng đo lường đáng tin cậy.
+    \item \textbf{Hiệu quả thích ứng:} mức độ giảm lịch sử được truy xuất/xử lý, mức độ giảm chi phí tài nguyên, sự thay đổi chất lượng gợi ý so với các baseline lịch sử cố định.
+\end{itemize}
+
+Kết quả mong muốn không chỉ đơn giản là tối đa hóa chất lượng gợi ý. Thay vào đó, dự án hướng tới việc xác định xem quản lý lịch sử thích ứng có thể giảm thiểu xử lý dữ liệu không cần thiết trong khi vẫn duy trì chất lượng gợi ý trong phạm vi có thể chấp nhận được hay không.
+
+\section{Mối liên hệ với EDAM}
+
+Dự án có thể được xem như một bài toán quản lý dữ liệu định hướng EDAM với một workload gợi ý. Mối quan hệ trung tâm là:
+
+\begin{center}
+Quyết định quản lý dữ liệu \\
+$\downarrow$ \\
+Lượng dữ liệu truy cập / truyền tải / xử lý \\
+$\downarrow$ \\
+Việc sử dụng tài nguyên và tính toán \\
+$\downarrow$ \\
+Chi phí thực thi và hiệu suất hệ thống \\
+$\downarrow$ \\
+Chất lượng gợi ý ở cấp độ ứng dụng
+\end{center}
+
+Trong dự án này, quyết định quản lý dữ liệu là: \textit{Nên truy xuất và xử lý bao nhiêu lịch sử hành vi cho một yêu cầu gợi ý?}
+
+Sử dụng ít lịch sử hơn có thể giảm mức tiêu thụ tài nguyên nhưng cũng có thể làm giảm chất lượng gợi ý. Sử dụng nhiều lịch sử hơn có thể cải thiện khả năng dự đoán nhưng lại có thể đưa thêm chi phí lưu trữ, truyền tải và tính toán. Do đó, lịch sử hành vi được coi là một nguồn tài nguyên dữ liệu mà số lượng của nó có thể được kiểm soát động theo giá trị và chi phí mong đợi của nó.
+
+Cách đóng khung này cũng giải thích sự liên quan của BLOOM-FaaS. Cơ chế lọc sớm của nó chứng minh rằng dữ liệu không cần thiết có thể được loại bỏ trước quá trình tính toán tốn kém, trong khi các quyết định thực thi thích ứng có thể dựa trên thông tin lúc chạy (runtime). Đồng thời, bản thân cơ chế lọc cũng có chi phí riêng, điều này có nghĩa là việc giảm thiểu dữ liệu chỉ nên áp dụng khi lợi ích thu lại xứng đáng với phần chi phí phụ (overhead) bỏ ra.
+
+Dự án đề xuất chuyển giao nguyên tắc chung này sang hệ thống gợi ý:
+\begin{center}
+Lọc dữ liệu sớm trong xử lý dữ liệu serverless \\
+$\downarrow$ \\
+Quản lý lịch sử hành vi thích ứng trong hệ thống gợi ý serverless
+\end{center}
+
+Do đó, dự án không cố gắng tái tạo lại kiến trúc BLOOM-FaaS hoặc trực tiếp áp dụng Bloom Filters.
+
+\section{Cơ sở hạ tầng thí nghiệm}
+
+Các thí nghiệm ban đầu có thể được phát triển bằng môi trường cục bộ (local) hoặc đám mây có khả năng tái tạo.
+
+Nếu có sẵn quyền truy cập và hạ tầng phù hợp, các thí nghiệm có thể được tiến hành trên Grid5000 để khảo sát mức tiêu thụ tài nguyên và hiệu suất dưới một hạ tầng nghiên cứu có kiểm soát. Grid5000 được xem như một hạ tầng thí nghiệm tùy chọn chứ không phải là một điều kiện bắt buộc của dự án.
+
+Tương tự, điện năng tiêu thụ sẽ chỉ được coi là tiêu chí đánh giá chính nếu có sẵn các thiết bị đo lường đáng tin cậy. Điều này giúp cho câu hỏi nghiên cứu cốt lõi độc lập với một hạ tầng cụ thể trong khi vẫn cho phép mở rộng dự án sang hướng đánh giá nhận thức năng lượng (energy-aware).
+
+\section{Đóng góp dự kiến}
+
+Dự án dự kiến sẽ mang lại những đóng góp sau:
+\begin{enumerate}
+    \item \textbf{Phân tích thực nghiệm về hiệu quả của lịch sử hành vi:} Định lượng xem lượng thông tin dự đoán có thể thu thập được bao nhiêu từ các lượng lịch sử hành vi khác nhau trong workload gợi ý video ngắn KuaiRand.
+    \item \textbf{Phân tích đặc điểm tài nguyên - chất lượng:} Thiết lập mối quan hệ giữa độ dài lịch sử, chất lượng gợi ý, chi phí quản lý dữ liệu và chi phí tính toán.
+    \item \textbf{Phân tích lợi ích - chi phí:} Khảo sát thời điểm khi lịch sử hành vi bổ sung cung cấp đủ lợi ích gợi ý để bù đắp cho chi phí truy cập và xử lý dữ liệu bổ sung.
+    \item \textbf{Chiến lược quản lý lịch sử thích ứng:} Phát triển và đánh giá một cơ chế có tính diễn giải để lựa chọn động số lượng lịch sử hành vi cần truy xuất và xử lý.
+    \item \textbf{Nghiên cứu tình huống về quản lý dữ liệu serverless:} Chứng minh việc sử dụng workload gợi ý như một nghiên cứu điển hình (case study) cụ thể cho các quyết định quản lý dữ liệu thích ứng trong điện toán serverless.
+    \item \textbf{Tiềm năng khái quát hóa:} Điều tra xem liệu nguyên tắc quản lý dữ liệu cơ bản có thể được mở rộng vượt ra ngoài hệ thống gợi ý thông qua một benchmark như TPC-H hay không, tùy thuộc vào quy mô dự án và tài nguyên sẵn có.
+\end{enumerate}
+
+\section{Phạm vi và Hạn chế}
+
+\textbf{Dự án sẽ tập trung vào:}
+\begin{itemize}
+    \item gợi ý video ngắn;
+    \item dự đoán có giám sát sử dụng lịch sử tương tác hành vi;
+    \item quản lý lịch sử hành vi;
+    \item truy xuất và xử lý dữ liệu;
+    \item thực thi serverless;
+    \item chất lượng gợi ý;
+    \item chi phí tính toán và tài nguyên;
+    \item các quyết định quản lý dữ liệu thích ứng;
+    \item môi trường thử nghiệm KuaiRand.
+\end{itemize}
+
+\textbf{Ban đầu dự án sẽ KHÔNG tập trung vào:}
+\begin{itemize}
+    \item phát triển một kiến trúc mô hình gợi ý tiên tiến mới;
+    \item xây dựng nền tảng gợi ý quy mô thực tế;
+    \item tạo lại kiến trúc BLOOM-FaaS;
+    \item trực tiếp áp dụng Bloom Filters vào gợi ý;
+    \item kiểm tra A/B trực tuyến đầy đủ (full online A/B testing);
+    \item đưa ra các tuyên bố nhân quả (causal claims) về các chính sách gợi ý trong thế giới thực;
+    \item yêu cầu Grid5000 như một điều kiện tiên quyết;
+    \item yêu cầu đo lường năng lượng khi không có sẵn hạ tầng đáng tin cậy.
+\end{itemize}
+
+TPC-H và Grid5000 sẽ được coi là những hướng mở rộng có thể thay vì là thành phần bắt buộc của dự án tối thiểu khả thi (minimum viable project). Do đó, các kết luận sẽ được hiểu trong phạm vi giới hạn của workload, tập dữ liệu, nguyên mẫu serverless và môi trường thí nghiệm đã chọn.
+
+\section{Giả thuyết dự kiến}
+
+Dự án điều tra giả thuyết sau:
+\begin{quote}
+\textit{Việc tăng độ dài lịch sử hành vi có thể cải thiện chất lượng gợi ý, nhưng lợi ích cận biên của lịch sử bổ sung dần dần sẽ giảm xuống trong khi chi phí tính toán và truy cập dữ liệu tiếp tục tăng.}
+\end{quote}
+
+Do đó:
+\begin{quote}
+\textit{Một chiến lược quản lý dữ liệu thích ứng có thể giảm bớt lượng dữ liệu hành vi được truy xuất và xử lý trong khi vẫn duy trì một mức độ chất lượng gợi ý chấp nhận được.}
+\end{quote}
+
+Giả thuyết này sẽ được kiểm chứng qua thực nghiệm thay vì mặc định đúng cho tất cả người dùng, mô hình, workload, hoặc các môi trường serverless.
+
+\section{Kế hoạch Thí nghiệm Sơ bộ}
+
+\begin{description}
+    \item[Giai đoạn 1 - Lược khảo tài liệu và tinh chỉnh bài toán:] Đánh giá tài liệu về hệ thống gợi ý chuỗi và video ngắn. Đánh giá các phương pháp xử lý dữ liệu thích ứng và quản lý dữ liệu serverless. Nghiên cứu BLOOM-FaaS và các công trình EDAM liên quan. Tinh chỉnh bài toán nghiên cứu và thiết kế thí nghiệm. Định nghĩa mối quan hệ giữa chất lượng gợi ý và chi phí tài nguyên.
+    \item[Giai đoạn 2 - Tập dữ liệu và thiết lập thí nghiệm:] Hoàn thiện luồng dữ liệu KuaiRand. Xác minh dữ liệu đánh giá và các biện pháp kiểm soát rò rỉ (leakage controls). Định nghĩa cách xây dựng lịch sử hành vi. Thiết lập bài toán học có giám sát và giao thức đánh giá. Thiết kế nguyên mẫu thực thi serverless ban đầu.
+    \item[Giai đoạn 3 - Các thí nghiệm về lịch sử cố định:] Huấn luyện/đánh giá cho $K \in \{0, 1, 5, 10, 20, 50, 100, \text{Full}\}$. Đo lường chất lượng gợi ý, dữ liệu được truy xuất, dữ liệu được truyền tải, độ trễ, bộ nhớ và khối lượng công việc tính toán.
+    \item[Giai đoạn 4 - Phân tích chất lượng - tài nguyên:] Xây dựng các đường cong chất lượng - tài nguyên. Phân tích lợi ích gợi ý cận biên và chi phí tài nguyên cận biên. Xác định các vùng hiệu quả giảm dần. Khảo sát các điều kiện để việc lấy thêm lịch sử trở nên đáng giá.
+    \item[Giai đoạn 5 - Chiến lược thích ứng:] Thiết kế cơ chế lựa chọn lịch sử thích ứng. Triển khai vòng lặp ra quyết định. Đánh giá các tiêu chí/ngưỡng quyết định khác nhau. So sánh lựa chọn thích ứng với các cấu hình lịch sử cố định.
+    \item[Giai đoạn 6 - Đánh giá serverless và phần mở rộng tùy chọn:] Đánh giá chiến lược trong nguyên mẫu serverless. Phân tích truy cập lưu trữ, truyền tải dữ liệu, thực thi hàm và độ trễ. Nếu khả thi, khảo sát mức tiêu thụ năng lượng. Nếu phạm vi và hạ tầng cho phép, khám phá khả năng khái quát hóa bằng TPC-H. Nếu có sẵn, tiến hành các thí nghiệm bổ sung trên Grid5000.
+    \item[Giai đoạn 7 - Phân tích và tài liệu hóa:] Phân tích kết quả thí nghiệm. Thảo luận về những hạn chế. Liên hệ các phát hiện với EDAM và quản lý dữ liệu serverless. Chuẩn bị báo cáo cuối cùng, bài thuyết trình, và bản demo.
+\end{description}
+
+\section{Kết quả Mong đợi}
+
+Kết quả cuối cùng sẽ là một nghiên cứu thực nghiệm có thể tái tạo (reproducible), điều tra xem liệu lịch sử hành vi có thể được xử lý như một tài nguyên dữ liệu quản lý thích ứng trong workload gợi ý video ngắn trên serverless hay không.
+
+Mối quan hệ trung tâm được khảo sát sẽ là:
+\begin{center}
+Lịch sử Hành vi $\rightarrow$ Truy cập / Truyền tải / Xử lý Dữ liệu $\rightarrow$ Chi phí Tài nguyên $\leftrightarrow$ Chất lượng Gợi ý
+\end{center}
+
+Dự án sau đó sẽ điều tra xem liệu một chiến lược thích ứng có thể hoạt động ở một điểm cân bằng chất lượng - tài nguyên có lợi hay không, thay vì lúc nào cũng truy xuất và xử lý lượng lịch sử tối đa hiện có.
+
+Workload gợi ý mang lại một tình huống nghiên cứu cụ thể, trong khi góc nhìn quản lý dữ liệu serverless rộng hơn cho phép nguyên tắc cơ bản có tiềm năng được khái quát hóa cho các workload xử lý dữ liệu khác, chẳng hạn như TPC-H, tùy thuộc vào phạm vi và cơ sở hạ tầng có sẵn.
+
+\end{document}
