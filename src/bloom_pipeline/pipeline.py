@@ -41,6 +41,31 @@ def run_pipeline(
     fill_ratio=global_filter.fill_ratio,
     target_fpr=0.01,
     )
+    build_key_set = set(build_keys)
+
+    true_positives = sum(
+        1 for record in candidates
+        if str(record[key_field]) in build_key_set
+    )
+    false_positives = sum(
+        1 for record in candidates
+        if str(record[key_field]) not in build_key_set
+    )
+    false_negatives = sum(
+        1 for record in rejected
+        if str(record[key_field]) in build_key_set
+    )
+
+    actual_absent = sum(
+        1 for record in probe_records
+        if str(record[key_field]) not in build_key_set
+    )
+
+    empirical_fpr = (
+        false_positives / actual_absent
+        if actual_absent > 0
+        else None
+    )
 
     return {
         "num_workers": num_workers,
@@ -59,6 +84,11 @@ def run_pipeline(
             bloom.fill_ratio for bloom in local_filters
         ],
         "calibration": calibration,
+        "true_positives": true_positives,
+        "false_positives": false_positives,
+        "false_negatives": false_negatives,
+        "actual_absent": actual_absent,
+        "empirical_fpr": empirical_fpr,
     }
 
 
@@ -95,6 +125,9 @@ def demo() -> None:
 
     print("candidate_records:", result["candidate_records"])
     print("rejected_records:", result["rejected_records"])
+    print("\n=== Calibration Recommendation ===")
+    for key, value in result["calibration"].items():
+        print(f"{key}: {value}")
 
 
 if __name__ == "__main__":
