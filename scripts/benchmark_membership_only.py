@@ -1,128 +1,190 @@
 
-import random
-import statistics
-import time
+"""Compare exact set membership with the shared Bloom Filter implementation.
 
-from benchmark_bloom_join import BloomFilter
+This is a local, sequential microbenchmark, not a distributed/serverless test.
+"""
+
+import argparse
+import csv
+from pathlib import Path
+from time import perf_counter
+
+import pandas as pd
+
+from src.bloom_pipeline.bloom_filter import BloomFilter
+from src.bloom_pipeline.calibration import (
+    optimal_bit_count,
+    optimal_hash_count,
+    theoretical_fpr,
+)
 
 
-SAMPLE_SIZES = [10_000, 100_000, 500_000]
-REPEATS = 5
-BUILD_SIZE = 10_000
-TARGET_FPR = 0.01
-SEED = 42
+ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT / "data" / "processed"
+REPORT_DIR = ROOT / "reports"
 
 
-def timed_membership(items, contains):
-    """Đo thời gian kiểm tra membership trên cùng một danh sách."""
-    start = time.perf_counter()
-    results = [contains(item) for item in items]
-    elapsed = time.perf_counter() - start
-    return results, elapsed
+def normalize_id(value) -> str:
+    """Normalize IDs consistently across the build set and history."""
+    if hasattr(value, "item"):
+        value = value.item()
+
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+
+    return str(value)
+
+
+def iter_probe_ids(history_frame, limit=None):
+    """Yield history video IDs without flattening the entire dataset in memory."""
+    count = 0
+
+    for history in history_frame["history_full"]:
+        if history is None:
+            continue
+
+        try:
+            iterator = iter(history)
+        except TypeError:
+            continue
+
+        for video_id in iterator:
+            yield normalize_id(video_id)
+            count += 1
+
+            if limit is not None and count >= limit:
+                return
 
 
 def main():
-    rng = random.Random(SEED)
-
-    # Build keys: 10.000 ID duy nhất.
-    build_ids = set(range(1_000_000, 1_000_000 + BUILD_SIZE))
-
-    bloom = BloomFilter(
-        n=BUILD_SIZE,
-        false_positive_rate=TARGET_FPR,
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--max-probes",
+        type=int,
+        default=None,
+        help="Maximum number of history interactions to probe; default: all",
     )
+    args = parser.parse_args()
 
-    for key in build_ids:
-        bloom.add(key)
+    if args.max_probes is not None and args.max_probes <= 0:
+        parser.error("--max-probes must be positive")
 
-    print(f"Build keys: {len(build_ids):,}")
-    print(f"Bloom bits: {bloom.m:,}")
-    print(f"Bloom hashes: {bloom.k}")
-    print(f"Bloom fill ratio: {bloom.fill_ratio():.4%}")
-    print()
+    events_path = DATA_DIR / "evaluation_events.parquet"
+    history_path = DATA_DIR / "evaluation_history.parquet"
 
-    for sample_size in SAMPLE_SIZES:
-        # 50% present, 50% absent.
-        present_count = sample_size // 2
-        absent_count = sample_size - present_count
+    events = pd.read_parquet(events_path)
+    history = pd.read_parquet(history_path)
 
-        present = rng.sample(list(build_ids), present_count)
-        absent = [
-            2_000_000 + i
-            for i in range(absent_count)
-        ]
+    build_ids = {
+        normalize_id(video_id)
+        for video_id in events.loc[
+            events["long_view"] == 1, "video_id"
+        ].dropna()
+    }
 
-        probes = present + absent
-        rng.shuffle(probes)
+    n = len(build_ids)
+    if n == 0:
+        raise ValueError("The build-side set is empty.")
 
-        # Warm-up, không tính vào kết quả.
-        for key in probes[:min(1_000, len(probes))]:
-            key in build_ids
-            bloom.might_contain(key)
+    target_fpr = 0.01
+    m = optimal_bit_count(n, target_fpr)
+    k = optimal_hash_count(m, n)
 
-        set_times = []
-        bloom_times = []
-        set_results = None
-        bloom_results = None
+    # Build the shared Bloom Filter implementation.
+    bloom = BloomFilter(m=m, k=k)
 
-        for _ in range(REPEATS):
-            # Cùng probes, chỉ đổi cách kiểm tra.
-            current_set_results, set_elapsed = timed_membership(
-                probes,
-                lambda key: key in build_ids,
-            )
+    build_start = perf_counter()
+    for video_id in build_ids:
+        bloom.add(video_id)
+    bloom_build_seconds = perf_counter() - build_start
 
-            current_bloom_results, bloom_elapsed = timed_membership(
-                probes,
-                bloom.might_contain,
-            )
+    # Pass 1: exact membership lookup.
+    exact_matches = 0
+    probe_count = 0
 
-            set_times.append(set_elapsed)
-            bloom_times.append(bloom_elapsed)
+    exact_start = perf_counter()
+    for video_id in iter_probe_ids(history, args.max_probes):
+        probe_count += 1
+        if video_id in build_ids:
+            exact_matches += 1
+    exact_seconds = perf_counter() - exact_start
 
-            set_results = current_set_results
-            bloom_results = current_bloom_results
+    # Pass 2: Bloom membership lookup only.
+    # Keep candidate IDs so exact verification happens outside the timed loop.
+    candidates = []
 
-        exact_matches = sum(set_results)
-        bloom_candidates = sum(bloom_results)
+    bloom_start = perf_counter()
+    for video_id in iter_probe_ids(history, args.max_probes):
+        if bloom.might_contain(video_id):
+            candidates.append(video_id)
+    bloom_probe_seconds = perf_counter() - bloom_start
 
-        false_positives = sum(
-            bloom_result and not exact_result
-            for bloom_result, exact_result
-            in zip(bloom_results, set_results)
-        )
+    # Verify candidates separately using the exact set.
+    verification_start = perf_counter()
+    verified_matches = sum(
+        1 for video_id in candidates if video_id in build_ids
+    )
+    verification_seconds = perf_counter() - verification_start
 
-        false_negatives = sum(
-            not bloom_result and exact_result
-            for bloom_result, exact_result
-            in zip(bloom_results, set_results)
-        )
+    false_positives = len(candidates) - verified_matches
+    false_negatives = exact_matches - verified_matches
+    exact_nonmatches = probe_count - exact_matches
+    rejected = probe_count - len(candidates)
 
-        absent_count_actual = sample_size - exact_matches
-        empirical_fpr = (
-            false_positives / absent_count_actual
-            if absent_count_actual else 0.0
-        )
+    empirical_fpr = (
+        false_positives / exact_nonmatches
+        if exact_nonmatches
+        else 0.0
+    )
+    rejection_ratio = rejected / probe_count if probe_count else 0.0
+    bloom_pipeline_seconds = bloom_probe_seconds + verification_seconds
 
-        median_set = statistics.median(set_times)
-        median_bloom = statistics.median(bloom_times)
+    result = {
+        "probe_limit": args.max_probes if args.max_probes is not None else "all",
+        "probe_records": probe_count,
+        "build_unique_ids": n,
+        "target_fpr": target_fpr,
+        "m_bits": m,
+        "k_hashes": k,
+        "bit_array_bytes": len(bloom.bit_array),
+        "fill_ratio": bloom.fill_ratio,
+        "theoretical_fpr": theoretical_fpr(m, n, k),
+        "exact_matches": exact_matches,
+        "bloom_candidates": len(candidates),
+        "verified_matches": verified_matches,
+        "false_positives": false_positives,
+        "false_negatives": false_negatives,
+        "empirical_fpr": empirical_fpr,
+        "rejected_records": rejected,
+        "rejection_ratio": rejection_ratio,
+        "bloom_build_seconds": bloom_build_seconds,
+        "exact_lookup_seconds": exact_seconds,
+        "bloom_lookup_seconds": bloom_probe_seconds,
+        "candidate_verification_seconds": verification_seconds,
+        "bloom_pipeline_seconds": bloom_pipeline_seconds,
+        "exact_over_bloom_lookup_speed_ratio": (
+            exact_seconds / bloom_probe_seconds
+            if bloom_probe_seconds
+            else 0.0
+        ),
+    }
 
-        print(f"=== Sample: {sample_size:,} probes ===")
-        print(f"Exact matches:       {exact_matches:,}")
-        print(f"Bloom candidates:    {bloom_candidates:,}")
-        print(f"False positives:     {false_positives:,}")
-        print(f"False negatives:     {false_negatives:,}")
-        print(f"Empirical FPR:       {empirical_fpr:.4%}")
-        print(f"Set median:          {median_set:.6f} s")
-        print(f"Bloom median:        {median_bloom:.6f} s")
+    print("\n=== Bloom membership-only benchmark ===")
+    for key, value in result.items():
+        if isinstance(value, float):
+            print(f"{key}: {value:.6f}")
+        else:
+            print(f"{key}: {value}")
 
-        if median_bloom > 0:
-            print(
-                "Set / Bloom speed:   "
-                f"{median_bloom / median_set:.2f}x"
-            )
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = REPORT_DIR / "bloom_membership_benchmark.csv"
 
-        print()
+    with output_path.open("w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=result.keys())
+        writer.writeheader()
+        writer.writerow(result)
+
+    print(f"\nSaved report: {output_path}")
 
 
 if __name__ == "__main__":
