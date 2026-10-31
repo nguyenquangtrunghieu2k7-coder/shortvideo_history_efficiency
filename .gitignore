@@ -16,7 +16,9 @@ data/interim/
 data/processed/
 
 # Generated reports
-reports/
+reports/eda/
+reports/phase5/
+
 
 # IDE
 .vscode/
@@ -32,3 +34,10 @@ models/*.pth
 BLOOM-FaaS-BLOOMFaaS.2025/
 data/
 Documents/
+
+.txt
+.csv
+.parquet
+.log
+.out
+.aux

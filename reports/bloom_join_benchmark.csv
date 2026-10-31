@@ -1,0 +1,2 @@
+build_unique_ids,probe_records,exact_matches,exact_non_matches,match_ratio,target_fpr,m_bits,k_hashes,filter_size_bytes,bloom_candidates,verified_matches,false_positives,false_negatives,empirical_fpr,records_rejected,rejection_ratio,exact_baseline_s,bloom_build_s,bloom_probe_s,exact_verification_s,bloom_total_s,speedup
+2618,25951773,20918,25930855,0.0008060335607898543,0.01,25094,7,3137,281621,20918,260703,0,0.010053775704657637,25670152,0.9891482944151831,1.0545129999809433,0.003690082987304777,20.66911691700807,0.005927124992012978,20.678734124987386,0.05099504609939882
