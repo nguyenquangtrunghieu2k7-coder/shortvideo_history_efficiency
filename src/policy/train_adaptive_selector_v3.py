@@ -199,25 +199,6 @@ def calibrate_with_heuristics(y, predictions, histories, uplift, features, args)
     return selected, table, cost_scale, full_auc
 
 
-def apply_heuristic(name, features, histories):
-    from adaptive_v3_policy import K_VALUES
-    parts = name.split("-")
-    if parts[1] == "length":
-        cutoff, low_k, high_k = int(parts[2]), int(parts[3]), parts[4]
-        high_k = "Full" if high_k == "Full" else int(high_k)
-        values = np.asarray([len(h) for h in histories])
-    else:
-        threshold, low_k, high_k = float(parts[2]), int(parts[3]), parts[4]
-        high_k = "Full" if high_k == "Full" else int(high_k)
-        values = features["recent_unique_ratio_100"].to_numpy(dtype=float)
-        cutoff = threshold
-    return np.where(
-        values <= cutoff,
-        K_VALUES.index(low_k),
-        K_VALUES.index(high_k),
-    ).astype(int)
-
-
 def main():
     args = parse_args()
     if args.batch_size <= 0 or args.trees <= 0 or args.lambda_steps < 2:
@@ -283,16 +264,9 @@ def main():
     cert_features = val_features.iloc[certification_idx].reset_index(drop=True)
     cert_predictions = {k: val_predictions[k][certification_idx] for k in K_VALUES}
     cert_histories = [validation.history_ids[i] for i in certification_idx]
-    if selected["deployment_mode"] == "heuristic":
-        cert_actions = apply_heuristic(selected["heuristic_name"], cert_features, cert_histories)
-    elif selected["deployment_mode"] == "fixed_k_fallback":
-        fixed = selected["fixed_K"]
-        fixed = "Full" if str(fixed) == "Full" else int(fixed)
-        cert_actions = np.full(len(certification_idx), K_VALUES.index(fixed), dtype=int)
-    else:
-        cert_actions = apply_selected_policy(
-            selected, model, cert_features, cert_histories, cost_scale, FEATURE_NAMES
-        )
+    cert_actions = apply_selected_policy(
+        selected, model, cert_features, cert_histories, cost_scale, FEATURE_NAMES
+    )
     cert_metrics, cert_scores = evaluate_actions(
         val_y[certification_idx], cert_predictions, cert_histories,
         cert_actions, "V3-certification",
@@ -365,19 +339,10 @@ def main():
 
     print("\nGenerating held-out test predictions...")
     test_predictions = collect_predictions(test, vocab_size, device, args.batch_size)
-    if selected["deployment_mode"] == "heuristic":
-        test_actions = apply_heuristic(
-            selected["heuristic_name"], test_features, test.history_ids
-        )
-    elif selected["deployment_mode"] == "fixed_k_fallback":
-        fixed = selected["fixed_K"]
-        fixed = "Full" if str(fixed) == "Full" else int(fixed)
-        test_actions = np.full(len(test_y), K_VALUES.index(fixed), dtype=int)
-    else:
-        test_actions = apply_selected_policy(
-            selected, model, test_features, test.history_ids,
-            cost_scale, FEATURE_NAMES,
-        )
+    test_actions = apply_selected_policy(
+        selected, model, test_features, test.history_ids,
+        cost_scale, FEATURE_NAMES,
+    )
 
     result_rows = []
     for k in K_VALUES:
@@ -445,6 +410,8 @@ def main():
         "feature_names": FEATURE_NAMES,
         "k_values": K_VALUES,
         "selected_validation_policy": selected,
+        "policy_protocol": "candidate_screen_by_validation_point_auc_then_single_independent_certification_ci_gate",
+        "policy_frozen_after_certification": True,
         "cost_normalization_scale": cost_scale,
         "max_auc_drop": args.max_auc_drop,
         "target_definition": "per-request AUC-contribution uplift vs Full reference scores; proxy target only",
