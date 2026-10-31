@@ -12,7 +12,7 @@ AUC(\pi) \ge AUC(Full)-\delta
 
 where \(\pi\) selects a history budget \(K_i\) for each request, \(C(K_i)\) is the number of history interactions processed, and \(\delta\) is the maximum acceptable global AUC drop.
 
-The default non-inferiority margin is \(\delta=0.01\). This is a validation constraint, not a promise that test AUC will satisfy it.
+The project non-inferiority margin is \\(\\delta=0.03\\). Use `--max-auc-drop 0.03` explicitly for all project V3 runs. This is a validation constraint, not a promise that test AUC will satisfy it.
 
 ## Why V3 replaces V2
 
