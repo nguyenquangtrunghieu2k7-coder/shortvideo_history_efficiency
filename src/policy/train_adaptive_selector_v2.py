@@ -3,13 +3,12 @@
 Protocol
 --------
 1. Frozen K-specific recommenders produce validation/test probabilities.
-2. Validation per-request log-loss is the supervised target for a multi-output
-   quality predictor.
-3. Validation is split into predictor-fit and policy-calibration subsets.
-4. A scalar cost penalty is calibrated on the held-out calibration subset:
-       argmin_k predicted_logloss[k] + lambda * history_fraction[k]
-   Choose the lambda with the lowest history budget while keeping calibration
-   AUC within --max-auc-drop of the Full model.
+2. The supervised target is each truncated K model's per-request log-loss
+   difference relative to Full (Full is the exact zero reference).
+3. Validation is split into predictor-fit and policy-calibration subsets;
+   ExtraTrees and RandomForest are compared on an inner fit-only split.
+4. A scalar cost penalty is selected on the held-out calibration subset by
+   minimizing calibration log-loss plus a configured normalized history cost.
 5. Test is used once for final evaluation.
 
 This evaluates history-interaction budget, not end-to-end latency, money, energy,
