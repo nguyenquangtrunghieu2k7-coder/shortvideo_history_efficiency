@@ -29,9 +29,9 @@ The checkboxes describe the current repository status, not a claim that the comp
 
 > How can behavioral history be managed adaptively to balance recommendation quality and computational work, and how can Bloom-filter-based distributed filtering support this workflow?
 
-Let \(\pi\) be a history-selection policy, \(AUC(\pi)\) its recommendation quality, \(HistoryCost(\pi)\) its history-processing cost proxy, and \(Full\) the policy using all available history.
+Let $\pi$ be a history-selection policy, $AUC(\pi)$ its recommendation quality, $HistoryCost(\pi)$ its history-processing cost proxy, and $Full$ the policy using all available history.
 
-\[\min_{\pi} HistoryCost(\pi) \quad \text{subject to} \quad AUC(\pi)\geq AUC(Full)-\delta.\]
+$$\min_{\pi} HistoryCost(\pi) \quad \text{subject to} \quad AUC(\pi)\geq AUC(Full)-\delta.$$
 
 The current experiments use **the number of historical interactions processed as a proxy for computational work**. This is not a direct measurement of CPU cycles, memory bandwidth, cloud billing, energy, or production latency.
 
@@ -127,7 +127,7 @@ flowchart TD
     RANK --> RESP["Recommendation response"]
 ```
 
-Before implementation, define precisely: which IDs are inserted, which records are probed, whether Bloom membership is a pre-filter for retrieval or join, how the selected \(K\) changes the probed records, and which exact verification follows a MAYBE result.
+Before implementation, define precisely: which IDs are inserted, which records are probed, whether Bloom membership is a pre-filter for retrieval or join, how the selected $K$ changes the probed records, and which exact verification follows a MAYBE result.
 
 ### 2.3 Recommender model
 
@@ -136,7 +136,7 @@ The baseline implementation in `src/models/baseline_models.py` contains:
 1. Candidate-video embedding.
 2. Historical-event/video embedding.
 3. Masked mean pooling over history embeddings.
-4. An MLP classifier producing \(P(long\_view)\).
+4. An MLP classifier producing $P(long\_view)$.
 
 ```mermaid
 flowchart LR
@@ -197,9 +197,9 @@ Candidate actions:
 K ∈ {0, 1, 5, 10, 20, 50, 100, Full}
 ```
 
-- \(K=0\): no behavioral history.
-- \(K=n\): up to the most recent \(n\) interactions.
-- \(K=Full\): all available history.
+- $K=0$: no behavioral history.
+- $K=n$: up to the most recent $n$ interactions.
+- $K=Full$: all available history.
 
 ### V3 — initial learned adaptive selector
 
@@ -225,19 +225,19 @@ Test paired-bootstrap 90% CI for AUC difference vs Full: `[-0.059108, -0.026752]
 
 V4 first applies the validation point-estimate constraint:
 
-\[AUC(\pi)\geq AUC(Full)-\delta,\qquad \delta=0.03.\]
+$$AUC(\pi)\geq AUC(Full)-\delta,\qquad \delta=0.03.$$
 
 Normalized quality retention:
 
-\[Q(\pi)=\operatorname{clip}\left( \frac{AUC(\pi)-[AUC(Full)-\delta]}{\delta},0,1 \right).\]
+$$Q(\pi)=\operatorname{clip}\left( \frac{AUC(\pi)-[AUC(Full)-\delta]}{\delta},0,1 \right).$$
 
 Normalized history saving:
 
-\[S(\pi)=\operatorname{clip}\left( 1-\frac{HistoryCost(\pi)}{HistoryCost(Full)},0,1 \right).\]
+$$S(\pi)=\operatorname{clip}\left( 1-\frac{HistoryCost(\pi)}{HistoryCost(Full)},0,1 \right).$$
 
 Balanced geometric utility:
 
-\[\boxed{U(\pi)=Q(\pi)^{0.6}S(\pi)^{0.4}}.\]
+$$\boxed{U(\pi)=Q(\pi)^{0.6}S(\pi)^{0.4}}.$$
 
 Among candidates satisfying the validation point-estimate constraint, V4 maximizes utility. Ties prefer higher AUC and then lower history cost. Full remains an eligible fallback.
 
@@ -258,7 +258,7 @@ Full test reference: AUC 0.614246; log-loss 0.353804; mean history interactions 
 
 Test paired-bootstrap 90% CI for V4 AUC difference vs Full: `[-0.030003, -0.004209]`.
 
-V4 passes the **validation point-estimate** constraint. Its test CI lower bound is slightly below \(-0.03\); therefore, V4 must not be described as satisfying a strict test-set LCB90 ≥ -0.03 requirement.
+V4 passes the **validation point-estimate** constraint. Its test CI lower bound is slightly below $-0.03$; therefore, V4 must not be described as satisfying a strict test-set LCB90 ≥ -0.03 requirement.
 
 **Project decision:** V4 is the selected main policy because it gives the best observed quality/history balance among the learned adaptive policies considered.
 
@@ -289,7 +289,7 @@ Test paired-bootstrap 90% CI vs Full: `[-0.038820, -0.011789]`.
 
 V6 keeps the V5 Pareto-knee strategy but strengthens feasibility. A candidate must satisfy both:
 
-\[\Delta AUC\geq -0.03 \quad\text{and}\quad LCB_{90\%}(\Delta AUC)\geq -0.03.\]
+$$\Delta AUC\geq -0.03 \quad\text{and}\quad LCB_{90\%}(\Delta AUC)\geq -0.03.$$
 
 The validation LCB is the 5th percentile of a class-stratified paired-bootstrap distribution, using 1,000 repetitions by default and seed 2026.
 
@@ -344,15 +344,15 @@ A standard Bloom Filter can produce false positives but should not produce false
 
 ### 4.1 Sizing and FPR equations
 
-For expected inserted cardinality \(n\) and target false-positive probability \(\epsilon\):
+For expected inserted cardinality $n$ and target false-positive probability $\epsilon$:
 
-\[m=-\frac{n\ln\epsilon}{(\ln 2)^2}, \qquad k=\frac{m}{n}\ln 2.\]
+$$m=-\frac{n\ln\epsilon}{(\ln 2)^2}, \qquad k=\frac{m}{n}\ln 2.$$
 
 Approximate false-positive probability:
 
-\[FPR\approx\left(1-e^{-kn/m}\right)^k.\]
+$$FPR\approx\left(1-e^{-kn/m}\right)^k.$$
 
-The filter computes positions \(h_i(x)\bmod m\), for \(i=1,\ldots,k\). Insertion sets each corresponding bit. A query returns NO if any required bit is zero; otherwise it returns MAYBE.
+The filter computes positions $h_i(x)\bmod m$, for $i=1,\ldots,k$. Insertion sets each corresponding bit. A query returns NO if any required bit is zero; otherwise it returns MAYBE.
 
 ### 4.2 Modules
 
@@ -393,19 +393,19 @@ sequenceDiagram
     Probe-->>Driver: MAYBE candidates and definite NO records
 ```
 
-For compatible filters \(B_j\), the merged bit array is:
+For compatible filters $B_j$, the merged bit array is:
 
-\[B_{global}=B_1\lor B_2\lor\cdots\lor B_N.\]
+$$B_{global}=B_1\lor B_2\lor\cdots\lor B_N.$$
 
-All filters must use the same \(m\), \(k\), and compatible hashing/indexing rules. OR merging represents the union of keys inserted across the workers.
+All filters must use the same $m$, $k$, and compatible hashing/indexing rules. OR merging represents the union of keys inserted across the workers.
 
 **Execution caveat:** the current code creates partitions and builds local filters sequentially in one Python process. It demonstrates the distributed dataflow and merge semantics, not actual parallel workers, network communication, FaaS invocation, or fault-tolerant distributed execution.
 
 ### 4.4 Calibration
 
-Given observed fill ratio \(f\), estimated cardinality is:
+Given observed fill ratio $f$, estimated cardinality is:
 
-\[\hat n=-\frac{m}{k}\ln(1-f).\]
+$$\hat n=-\frac{m}{k}\ln(1-f).$$
 
 The calibration module uses this estimate to recommend a future bit-array size and hash count for a target FPR. It does not resize the existing filter in place.
 
@@ -530,7 +530,7 @@ The held-out test partition contains 6,455 requests. It is used after policy sel
 - **History reduction:** relative reduction compared with Full.
 - **Paired-bootstrap CI:** uncertainty interval for AUC difference versus Full.
 
-\[ HistoryReduction =1-\frac{TotalInteractions_{policy}}{TotalInteractions_{Full}}. \]
+$$ HistoryReduction =1-\frac{TotalInteractions_{policy}}{TotalInteractions_{Full}}. $$
 
 ---
 
