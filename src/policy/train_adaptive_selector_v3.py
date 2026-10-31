@@ -1,9 +1,8 @@
 """Train and evaluate Adaptive History Selector V3.
 
-V3 is quality-first: select the highest-AUC candidate among fixed-K and
-learned-lambda policies that satisfy the tuning AUC and paired-bootstrap
-non-inferiority constraints. History interactions are reported as the cost
-trade-off; they are not maximized at the expense of recommendation quality.
+V3 selects the minimum-history candidate among fixed-K and learned-lambda
+policies that satisfy the validation AUC-drop constraint. Higher AUC breaks
+ties in history cost.
 
 Request-level AUC-contribution uplift is a supervised proxy. The policy is selected on a validation tuning split and evaluated once on the held-out test split.
 """
@@ -51,6 +50,10 @@ def parse_args():
     p.add_argument("--lambda-steps", type=int, default=41)
     p.add_argument("--bootstrap-repeats", type=int, default=200)
     p.add_argument("--bootstrap-seed", type=int, default=2026)
+    p.add_argument(
+        "--audit-splits-only", action="store_true",
+        help="Audit user overlap in current row-level validation splits and exit before model inference.",
+    )
     return p.parse_args()
 
 
@@ -108,6 +111,22 @@ def collect_predictions(dataset, vocab_size, device, batch_size):
     return predictions
 
 
+def report_split_overlap(name, left_groups, right_groups, left_y, right_y):
+    """Report same-user overlap across the two sides of a row-level split."""
+    left_groups = np.asarray(left_groups)
+    right_groups = np.asarray(right_groups)
+    overlap = np.intersect1d(np.unique(left_groups), np.unique(right_groups))
+    print(
+        f"{name}: left_rows={len(left_groups)}, right_rows={len(right_groups)}, "
+        f"left_users={len(np.unique(left_groups))}, right_users={len(np.unique(right_groups))}, "
+        f"overlap_users={len(overlap)}"
+    )
+    print(
+        f"  positive_rate: left={np.mean(left_y):.4f}, "
+        f"right={np.mean(right_y):.4f}"
+    )
+
+
 def main():
     args = parse_args()
     if args.batch_size <= 0 or args.trees <= 0 or args.lambda_steps < 2:
@@ -129,6 +148,37 @@ def main():
     val_y = np.asarray(validation.labels, dtype=np.int8)
     val_features = history_features(validation.history_ids)
 
+    # Reproduce the exact row-level splits used by the current V3 pipeline.
+    from sklearn.model_selection import train_test_split
+    all_indices = np.arange(len(val_y))
+    development_idx, tuning_idx = train_test_split(
+        all_indices, test_size=0.50,
+        random_state=args.random_state, stratify=val_y,
+    )
+    development_groups = np.asarray(validation.user_ids)[development_idx]
+    tuning_groups = np.asarray(validation.user_ids)[tuning_idx]
+    if args.audit_splits_only:
+        print("\n=== USER-OVERLAP AUDIT (NO MODEL INFERENCE) ===")
+        report_split_overlap(
+            "Development vs policy-tuning",
+            development_groups, tuning_groups,
+            val_y[development_idx], val_y[tuning_idx],
+        )
+        inner_fit_idx, inner_select_idx = train_test_split(
+            np.arange(len(development_idx)), test_size=0.20,
+            random_state=args.random_state + 11,
+            stratify=val_y[development_idx],
+        )
+        report_split_overlap(
+            "Uplift-model fit vs model-selection",
+            development_groups[inner_fit_idx],
+            development_groups[inner_select_idx],
+            val_y[development_idx][inner_fit_idx],
+            val_y[development_idx][inner_select_idx],
+        )
+        print("Audit only: no recommender inference, predictor fitting, or test evaluation was run.")
+        return
+
     print("\nGenerating validation predictions...")
     val_predictions = collect_predictions(
         validation, vocab_size, device, args.batch_size
@@ -136,11 +186,6 @@ def main():
 
     # Use validation for model development and policy selection only.
     # The held-out test split is evaluated once after the policy is frozen.
-    from sklearn.model_selection import train_test_split
-    development_idx, tuning_idx = train_test_split(
-        np.arange(len(val_y)), test_size=0.50,
-        random_state=args.random_state, stratify=val_y,
-    )
     development_features = val_features.iloc[development_idx].reset_index(drop=True)
     development_predictions = {k: val_predictions[k][development_idx] for k in K_VALUES}
     development_y = val_y[development_idx]
