@@ -88,12 +88,25 @@ def main():
     cost_scale = float(bundle["cost_normalization_scale"])
     frame = pd.read_parquet(args.test_decisions)
 
-    required = {"long_view", "available_history_length"}
+    required = {
+        "evaluation_id", "user_id", "long_view", "available_history_length",
+        "selected_policy", "deployment_mode",
+    }
     required.update(feature_names)
     required.update({f"probability_K{k}" for k in K_VALUES})
     missing = sorted(required.difference(frame.columns))
     if missing:
         raise ValueError(f"Test artifact is missing required columns: {missing}")
+
+    if not frame["selected_policy"].eq(selected["policy"]).all():
+        raise ValueError(
+            "Test decisions were generated for a different policy than the frozen model bundle. "
+            "Re-run train_adaptive_selector_v3.py before evaluating."
+        )
+    if not frame["deployment_mode"].eq(selected["deployment_mode"]).all():
+        raise ValueError(
+            "Test decisions deployment_mode does not match the frozen model bundle."
+        )
 
     y = frame["long_view"].to_numpy(dtype=np.int8)
     lengths = frame["available_history_length"].to_numpy(dtype=np.int64)
