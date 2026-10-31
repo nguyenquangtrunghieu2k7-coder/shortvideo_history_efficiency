@@ -351,29 +351,6 @@ def calibrate_policy(y_true, predictions, histories, uplift_predictions,
     return selected, table, mean_full_length, full_auc
 
 
-def apply_heuristic_policy(policy_name, features, history_lengths):
-    """Apply a validation-selected transparent heuristic without retuning it."""
-    parts = policy_name.split("-")
-    lengths = np.asarray(history_lengths, dtype=np.int64)
-    if parts[1] == "length":
-        cutoff, low_k, high_k = int(parts[2]), int(parts[3]), parts[4]
-        values = lengths
-    elif parts[1] == "diversity":
-        cutoff, low_k, high_k = float(parts[2]), int(parts[3]), parts[4]
-        if "recent_unique_ratio_100" not in features:
-            raise ValueError("The selected diversity heuristic requires recent_unique_ratio_100.")
-        values = features["recent_unique_ratio_100"].to_numpy(dtype=float)
-    else:
-        raise ValueError(f"Unknown heuristic policy: {policy_name}")
-
-    high_k = _parse_k(high_k)
-    return np.where(
-        values <= cutoff,
-        K_VALUES.index(low_k),
-        K_VALUES.index(high_k),
-    ).astype(np.int64)
-
-
 def apply_selected_policy_from_lengths(
     selected, model, features, history_lengths, cost_scale, feature_names
 ):
@@ -381,10 +358,6 @@ def apply_selected_policy_from_lengths(
     mode = selected.get("deployment_mode")
     if mode == "fixed_k_fallback":
         return actions_for_fixed_k(len(features), _parse_k(selected["fixed_K"]))
-    if mode == "heuristic":
-        return apply_heuristic_policy(
-            selected["heuristic_name"], features, history_lengths
-        )
     if mode != "learned_adaptive":
         raise ValueError(f"Unknown or unfrozen V3 deployment mode: {mode!r}")
 
