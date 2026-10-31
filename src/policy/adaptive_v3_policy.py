@@ -2,7 +2,7 @@
 
 V3 learns request-level *AUC contribution uplift* relative to the Full-history
 reference. The global AUC constraint is then enforced on a disjoint validation
-calibration split using paired bootstrap confidence bounds.
+calibration split using the point-estimate AUC constraint. Bootstrap intervals are reported only after final test evaluation.
 """
 from __future__ import annotations
 
@@ -298,13 +298,8 @@ def calibrate_policy(y_true, predictions, histories, uplift_predictions,
 
     def add_candidate(kind, name, actions, penalty=None, fixed_k=None):
         metrics, scores = evaluate_actions(y, predictions, histories, actions, name)
-        ci_low, ci_high = stratified_paired_auc_difference_ci(
-            y, scores, full_scores, repeats=bootstrap_repeats,
-            random_state=random_state + len(candidates),
-        )
         delta = metrics["auc"] - full_auc
         point_feasible = bool(delta >= -float(max_auc_drop))
-        ci_feasible = bool(ci_low >= -float(max_auc_drop))
         candidates.append({
             "policy": name,
             "policy_type": kind,
@@ -312,13 +307,9 @@ def calibrate_policy(y_true, predictions, histories, uplift_predictions,
             "fixed_K": fixed_k,
             "auc": metrics["auc"],
             "auc_delta_vs_full": delta,
-            "auc_delta_ci_low_90": ci_low,
-            "auc_delta_ci_high_90": ci_high,
             "history_cost_ratio": metrics["history_cost_ratio"],
             "history_reduction_vs_full": metrics["history_reduction_vs_full"],
             "mean_history_interactions": metrics["mean_history_interactions"],
-            "feasible": point_feasible,
-            "ci_feasible_on_tuning": ci_feasible,
             "selection_feasible": point_feasible,
         })
 
