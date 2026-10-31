@@ -20,7 +20,7 @@ def _row(policy, auc, saving):
 def test_pareto_frontier_removes_dominated_candidates():
     candidates = pd.DataFrame([
         _row("A", 0.90, 0.10),
-        _row("B", 0.85, 0.20),
+        _row("B", 0.85, 0.05),
         _row("C", 0.80, 0.70),
         _row("D", 0.70, 0.90),
     ])
