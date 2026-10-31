@@ -26,12 +26,18 @@ V1 remains unchanged and is the direct-classification baseline.
 
 - Request-time features describe history composition, concentration, recency,
   head/tail overlap, novelty, and adjacent repetition.
-- An `ExtraTreesRegressor` predicts the per-request binary log-loss for each
-  frozen K-specific recommender.
+- The quality target is now the per-request log-loss difference
+  `loss(K) - loss(Full)`. Full is the exact zero reference, so the model
+  focuses on the relative quality change caused by truncating history rather
+  than predicting each model's noisy absolute loss independently.
+- Targets are winsorized at the 1st/99th percentiles using predictor-fit data
+  only. ExtraTrees and RandomForest are compared on an inner split of the
+  predictor-fit partition; the lower-MAE model is refit on that full partition.
 - Validation is split into predictor-fit and policy-calibration subsets.
-  The predictor is fit only on the first subset. The scalar `lambda` is chosen
-  on the second subset by finding the smallest interaction budget whose AUC is
-  within the configured tolerance of the Full model.
+  The scalar `lambda` is selected on the second subset by minimizing
+  `calibration_logloss + budget_weight * normalized_mean_history_cost`.
+  AUC is reported as an evaluation metric, not used as a hard feasibility gate.
+  This removes the previous no-feasible-lambda fallback.
 - Test is held out for the final evaluation only.
 
 The cost penalty uses each candidate K's interaction count divided by the
@@ -52,14 +58,15 @@ Useful options:
 
 ```bash
 python src/policy/train_adaptive_selector_v2.py \
-  --max-auc-drop 0.01 \
+  --budget-weight 0.005 \
   --calibration-fraction 0.30 \
   --trees 500 \
   --lambda-max 0.50 \
   --lambda-steps 101
 ```
 
-The default AUC tolerance is 0.01 absolute ROC-AUC. It is a policy constraint,
+The default budget weight controls the trade-off between validation logloss
+and normalized history-interaction budget. It is an explicit utility parameter,
 not a claim that per-request log-loss equals AUC.
 
 ## Outputs
@@ -70,6 +77,7 @@ not a claim that per-request log-loss equals AUC.
 - `data/processed/phase9_v2/adaptive_v2_lambda_calibration.csv`
 - `data/processed/phase9_v2/adaptive_v2_feature_importance.csv`
 - `data/processed/phase9_v2/adaptive_v2_quality_diagnostics.csv`
+- `data/processed/phase9_v2/adaptive_v2_model_selection.csv`
 
 The test decisions Parquet additionally stores:
 - frozen-model probabilities for every K;
