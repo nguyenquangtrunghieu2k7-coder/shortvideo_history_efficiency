@@ -177,7 +177,10 @@ def calibrate_with_heuristics(y, predictions, histories, uplift, features, args)
             "history_cost_ratio": metrics["history_cost_ratio"],
             "history_reduction_vs_full": metrics["history_reduction_vs_full"],
             "mean_history_interactions": metrics["mean_history_interactions"],
-            "feasible": bool(low >= -args.max_auc_drop),
+            # Candidate screening uses point-estimate feasibility. The
+            # independent certification split is the sole CI-based gate.
+            "feasible": bool((metrics["auc"] - full_auc) >= -args.max_auc_drop),
+            "ci_feasible_on_tuning": bool(low >= -args.max_auc_drop),
             "selected_for_test": False,
         })
     if heuristic_rows:
@@ -298,8 +301,10 @@ def main():
         val_y[certification_idx], cert_scores, cert_predictions["Full"],
         repeats=args.bootstrap_repeats, random_state=args.bootstrap_seed + 5000,
     )
-    certification_passed = bool(cert_low >= -args.max_auc_drop)
-    if not certification_passed:
+    candidate_policy_name = selected["policy"]
+    candidate_certification_passed = bool(cert_low >= -args.max_auc_drop)
+    certification_fallback = not candidate_certification_passed
+    if certification_fallback:
         selected = {
             "policy": "Fixed-K-Full",
             "deployment_mode": "fixed_k_fallback",
@@ -307,16 +312,18 @@ def main():
             "history_cost_ratio": 1.0,
             "certification_fallback": True,
         }
-    selected["independent_certification_passed"] = certification_passed
-    selected["certification_auc"] = cert_metrics["auc"]
-    selected["certification_auc_delta_ci_low_90"] = cert_low
-    selected["certification_auc_delta_ci_high_90"] = cert_high
+    selected["candidate_policy_before_certification"] = candidate_policy_name
+    selected["candidate_certification_passed"] = candidate_certification_passed
+    selected["certification_fallback_to_full"] = certification_fallback
+    selected["candidate_certification_auc"] = cert_metrics["auc"]
+    selected["candidate_certification_auc_delta_ci_low_90"] = cert_low
+    selected["candidate_certification_auc_delta_ci_high_90"] = cert_high
     policy_table["selected_for_test"] = policy_table["policy"].eq(selected["policy"])
     print("\nSelected policy after independent certification:")
     print(json.dumps(selected, indent=2, default=str))
     print(
         f"Certification 90% CI for AUC delta: [{cert_low:.6f}, {cert_high:.6f}] "
-        f"— {'PASS' if certification_passed else 'FAIL; Full fallback'}"
+        f"— {'PASS' if candidate_certification_passed else 'FAIL; Full fallback'}"
     )
 
     print("\nLoading held-out test requests...")
@@ -354,9 +361,12 @@ def main():
         "selected_policy": selected["policy"],
         "max_auc_drop_validation": args.max_auc_drop,
         "quality_predictor": model_name,
-        "independent_certification_passed": certification_passed,
-        "certification_auc_delta_ci_low_90": cert_low,
-        "certification_auc_delta_ci_high_90": cert_high,
+        "candidate_policy_before_certification": candidate_policy_name,
+        "candidate_certification_passed": candidate_certification_passed,
+        "certification_fallback_to_full": certification_fallback,
+        "candidate_certification_auc": cert_metrics["auc"],
+        "candidate_certification_auc_delta_ci_low_90": cert_low,
+        "candidate_certification_auc_delta_ci_high_90": cert_high,
     })
     result_rows.append(adaptive_metrics)
 
