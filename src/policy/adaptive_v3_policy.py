@@ -11,13 +11,39 @@ import pandas as pd
 from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor, HistGradientBoostingRegressor
 from sklearn.multioutput import MultiOutputRegressor
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.metrics import roc_auc_score, log_loss
 
 
 K_VALUES = [0, 1, 5, 10, 20, 50, 100, "Full"]
 TRUNCATED_K_VALUES = K_VALUES[:-1]
 EPS = 1e-7
+
+
+def stratified_group_split(labels, groups, n_splits, random_state):
+    """Return one stratified fold with no group shared across its sides."""
+    y = np.asarray(labels, dtype=np.int8)
+    group_ids = np.asarray(groups)
+    if len(y) != len(group_ids):
+        raise ValueError("labels and groups must have equal length.")
+    if len(np.unique(group_ids)) < n_splits:
+        raise ValueError(
+            f"Need at least {n_splits} unique groups, got {len(np.unique(group_ids))}."
+        )
+    splitter = StratifiedGroupKFold(
+        n_splits=n_splits, shuffle=True, random_state=random_state
+    )
+    train_idx, heldout_idx = next(
+        splitter.split(np.zeros(len(y)), y, group_ids)
+    )
+    overlap = np.intersect1d(
+        np.unique(group_ids[train_idx]), np.unique(group_ids[heldout_idx])
+    )
+    if len(overlap):
+        raise RuntimeError("Stratified group split produced overlapping groups.")
+    if set(np.unique(y[train_idx])) != {0, 1} or set(np.unique(y[heldout_idx])) != {0, 1}:
+        raise RuntimeError("A stratified group split is missing a label class.")
+    return train_idx, heldout_idx
 
 
 def score_matrix(predictions: dict, k_values=K_VALUES) -> np.ndarray:
@@ -116,15 +142,13 @@ def _class_balanced_weights(labels):
     return weights * (len(weights) / weights.sum())
 
 
-def fit_auc_uplift_predictor(features, labels, predictions, args, feature_names):
-    """Model selection inside development validation; calibration stays separate."""
+def fit_auc_uplift_predictor(features, labels, predictions, groups, args, feature_names):
+    """Group-disjoint model selection inside development; calibration stays separate."""
     y = np.asarray(labels, dtype=np.int8)
+    group_ids = np.asarray(groups)
     x = features[feature_names].reset_index(drop=True)
-    fit_idx, select_idx = train_test_split(
-        np.arange(len(y)),
-        test_size=0.20,
-        random_state=args.random_state + 11,
-        stratify=y,
+    fit_idx, select_idx = stratified_group_split(
+        y, group_ids, n_splits=5, random_state=args.random_state + 11
     )
     # Targets are built independently inside each partition. In particular,
     # calibration-partition labels/scores never contribute to fit targets.
