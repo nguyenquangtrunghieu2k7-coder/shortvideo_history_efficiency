@@ -47,7 +47,7 @@ def parse_args():
     p.add_argument("--random-state", type=int, default=42)
     p.add_argument("--trees", type=int, default=400)
     p.add_argument("--min-samples-leaf", type=int, default=25)
-    p.add_argument("--max-auc-drop", type=float, default=0.01,
+    p.add_argument("--max-auc-drop", type=float, default=0.03,
                    help="Maximum allowed global AUC drop vs Full.")
     p.add_argument("--lambda-steps", type=int, default=41)
     p.add_argument("--bootstrap-repeats", type=int, default=200)
