@@ -238,6 +238,11 @@ def calibrate_knee_policy(
     )
     for col in ["is_pareto_frontier", "selected_for_test"]:
         all_candidates[col] = all_candidates[col].fillna(False).astype(bool)
+    # A Full fallback may itself be dominated and therefore absent from the
+    # frontier; still mark the actually frozen policy in the complete table.
+    all_candidates.loc[
+        all_candidates["policy"].eq(selected["policy"]), "selected_for_test"
+    ] = True
     return selected, all_candidates, frontier_out, cost_scale, full_auc
 
 
