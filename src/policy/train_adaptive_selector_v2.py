@@ -283,8 +283,7 @@ def metric_logloss(y_true, scores):
 def history_cost_fraction(histories, scale):
     """Normalize interaction counts by a fixed calibration-set mean length.
 
-    The same scale must be reused at test/inference time so lambda retains
-    exactly the same units after calibration.
+    The same scale is reused at test/inference time for a stable budget term.
     """
     lengths = np.asarray([len(history) for history in histories], dtype=np.float64)
     scale = max(float(scale), 1.0)
@@ -298,11 +297,6 @@ def history_cost_fraction(histories, scale):
             used = np.minimum(lengths, int(k))
         costs.append(used / scale)
     return np.column_stack(costs)
-
-
-def choose_k(predicted_losses, cost_fraction, penalty):
-    objective = predicted_losses + float(penalty) * cost_fraction
-    return np.argmin(objective, axis=1)
 
 
 def selected_scores(predictions, selected_indices):
@@ -391,7 +385,7 @@ def main():
         raise ValueError("budget-weight and max-logloss-regret must be non-negative")
 
     print("=" * 80)
-    print("ADAPTIVE HISTORY SELECTOR V2 — QUALITY PREDICTION + COST POLICY")
+    print("ADAPTIVE HISTORY SELECTOR V2 — QUALITY ACCEPTANCE + AUC/BUDGET POLICY")
     print("=" * 80)
 
     device = baseline.get_device()
@@ -452,7 +446,6 @@ def main():
     calibration_cost_scale = max(
         float(np.mean([len(h) for h in calibration_histories])), 1.0
     )
-    calibration_actual_losses = val_loss_matrix[calibration_indices]
     threshold, calibration_table, calibration_full_auc, calibration_status = (
         calibrate_acceptance_threshold(
             val_y[calibration_indices], calibration_predictions,
@@ -515,7 +508,7 @@ def main():
 
     metrics_path = output_dir / "adaptive_v2_metrics.csv"
     decisions_path = output_dir / "adaptive_v2_test_decisions.parquet"
-    calibration_path = output_dir / "adaptive_v2_lambda_calibration.csv"
+    calibration_path = output_dir / "adaptive_v2_threshold_calibration.csv"
     importance_path = output_dir / "adaptive_v2_feature_importance.csv"
     quality_diagnostics_path = output_dir / "adaptive_v2_quality_diagnostics.csv"
     model_selection_path = output_dir / "adaptive_v2_model_selection.csv"
@@ -620,7 +613,7 @@ def main():
     print(f"  Model: {model_path}")
     print(f"  Metrics: {metrics_path}")
     print(f"  Decisions: {decisions_path}")
-    print(f"  Lambda calibration: {calibration_path}")
+    print(f"  Acceptance-threshold calibration: {calibration_path}")
     print(f"  Feature importance: {importance_path}")
     print(f"  Quality diagnostics: {quality_diagnostics_path}")
     print(f"  Model selection: {model_selection_path}")
