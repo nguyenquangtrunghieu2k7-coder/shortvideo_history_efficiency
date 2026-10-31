@@ -162,15 +162,14 @@ def metric_logloss(y_true, scores):
     ))
 
 
-def history_cost_fraction(histories):
-    """Normalize per-request interaction counts by mean Full-history length.
+def history_cost_fraction(histories, scale):
+    """Normalize interaction counts by a fixed calibration-set mean length.
 
-    Summing this matrix over requests is proportional to total interactions,
-    unlike dividing each request by its own history length (which would give
-    short and long histories equal weight in the aggregate budget).
+    The same scale must be reused at test/inference time so lambda retains
+    exactly the same units after calibration.
     """
     lengths = np.asarray([len(history) for history in histories], dtype=np.float64)
-    scale = max(float(lengths.mean()) if len(lengths) else 0.0, 1.0)
+    scale = max(float(scale), 1.0)
     costs = []
     for k in K_VALUES:
         if k == 0:
@@ -239,8 +238,9 @@ def calibrate_penalty(
     max_auc_drop,
     lambda_max,
     lambda_steps,
+    cost_scale,
 ):
-    cost = history_cost_fraction(histories)
+    cost = history_cost_fraction(histories, cost_scale)
     full_auc = metric_auc(y_true, predictions["Full"])
     candidates = []
 
@@ -340,6 +340,9 @@ def main():
     calibration_histories = [
         validation.history_ids[i] for i in calibration_indices
     ]
+    calibration_cost_scale = max(
+        float(np.mean([len(h) for h in calibration_histories])), 1.0
+    )
     penalty, calibration_table, calibration_full_auc, calibration_status = (
         calibrate_penalty(
             val_y[calibration_indices],
@@ -349,6 +352,7 @@ def main():
             args.max_auc_drop,
             args.lambda_max,
             args.lambda_steps,
+            calibration_cost_scale,
         )
     )
     print(f"Calibrated lambda: {penalty:.6f} ({calibration_status})")
@@ -365,7 +369,7 @@ def main():
         test, vocab_size, device, args.batch_size
     )
     test_predicted_losses = predictor.predict(test_features[FEATURE_NAMES])
-    test_cost = history_cost_fraction(test.history_ids)
+    test_cost = history_cost_fraction(test.history_ids, calibration_cost_scale)
     test_selected = choose_k(test_predicted_losses, test_cost, penalty)
 
     rows = [
@@ -424,6 +428,7 @@ def main():
         "feature_names": FEATURE_NAMES,
         "k_values": K_VALUES,
         "lambda": penalty,
+        "cost_normalization_scale": calibration_cost_scale,
         "max_auc_drop": args.max_auc_drop,
         "calibration_status": calibration_status,
         "calibration_full_auc": calibration_full_auc,
