@@ -44,7 +44,7 @@ def test_duplicate_coordinates_are_collapsed_deterministically():
 
 def test_knee_point_selects_bend_when_curve_is_on_either_chord_side():
     # Same geometric bend, mirrored around the endpoint chord.
-    for knee_auc in (0.80, 0.70):
+    for knee_auc in (0.80, 0.62):
         frontier = pd.DataFrame([
             _row("quality-end", 0.90, 0.00),
             _row("knee", knee_auc, 0.80),
@@ -55,6 +55,21 @@ def test_knee_point_selects_bend_when_curve_is_on_either_chord_side():
         assert selected["policy"] == "knee"
         assert selected["knee_distance"] > 0
         assert annotated["signed_knee_distance"].notna().sum() == 1
+
+
+def test_knee_point_identifies_bend_in_observed_v5_frontier_shape():
+    frontier = pd.DataFrame([
+        _row("Full", 0.6485928545, 0.000000),
+        _row("lambda-0", 0.6312650896, 0.250790),
+        _row("lambda-0011", 0.6286983, 0.268633),
+        _row("lambda-0203", 0.6264047, 0.298559),
+        _row("lambda-0492", 0.62568894, 0.482877),
+        _row("lambda-0661", 0.62297708, 0.574135),
+    ])
+    selected, annotated, reason = _knee_point(frontier)
+    assert reason is None
+    assert selected["policy"] == "lambda-0203"
+    assert selected["knee_distance"] > annotated["knee_distance"].dropna().median()
 
 
 def test_knee_point_falls_back_for_nearly_linear_frontier():
