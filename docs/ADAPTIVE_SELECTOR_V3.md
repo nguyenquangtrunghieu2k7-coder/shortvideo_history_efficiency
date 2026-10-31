@@ -2,15 +2,13 @@
 
 ## Research objective
 
-V3 formulates adaptive history selection as:
+V3 uses a quality-first, cost-aware policy selection rule:
 
-\[
-\min_{\pi} \mathbb{E}[C(K_i)]
-\quad \text{subject to} \quad
-AUC(\pi) \ge AUC(Full)-\delta
-\]
+1. Keep only policies whose tuning AUC point estimate and paired-bootstrap lower bound satisfy the non-inferiority margin.
+2. Among those eligible policies, select the highest global AUC.
+3. Use lower history-interaction cost only as a tie-breaker between policies with equivalent AUC.
 
-where \(\pi\) selects a history budget \(K_i\) for each request, \(C(K_i)\) is the number of history interactions processed, and \(\delta\) is the maximum acceptable global AUC drop.
+This deliberately avoids maximizing history reduction at the expense of recommendation quality. A moderate reduction is a valid outcome when it preserves ranking quality.
 
 The project non-inferiority margin is \\(\\delta=0.03\\). Use `--max-auc-drop 0.03` explicitly for all project V3 runs. This is a validation constraint, not a promise that test AUC will satisfy it.
 
@@ -46,11 +44,11 @@ Compare ExtraTrees, Random Forest, HistGradientBoosting, and a mean-only baselin
 
 Compare:
 - all fixed K policies: 0, 1, 5, 10, 20, 50, 100, Full;
-- transparent history-length heuristics;
-- transparent history-diversity heuristics;
 - learned per-request policies maximizing predicted AUC uplift minus a penalty on normalized interaction cost.
 
-On the policy-tuning partition, calculate each candidate policy’s actual global AUC. Screen candidates by the point-estimate constraint AUC(policy) ≥ AUC(Full) − δ, then choose the lowest-cost candidate (learned policies must beat the best fixed-K policy; transparent heuristics may also win). Bootstrap intervals on this tuning partition are diagnostics, not the final gate. The selected candidate is evaluated once on the separate certification partition.
+No hand-written history-length or history-diversity heuristic is included in V3 policy selection.
+
+On the policy-tuning partition, calculate each candidate policy’s actual global AUC and paired, class-stratified bootstrap interval against Full. A candidate is eligible only when both its point-estimate AUC delta and the lower bootstrap bound are at least −δ. Among eligible candidates, choose the highest-AUC policy; lower history cost is only a tie-breaker. This is quality-first selection: the policy is not rewarded for reducing more history when doing so weakens recommendation quality. The selected candidate is evaluated once on the separate certification partition.
 
 ### 5. Independent certification
 
