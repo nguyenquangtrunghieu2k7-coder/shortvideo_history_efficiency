@@ -301,7 +301,7 @@ def main():
     certification_passed = bool(cert_low >= -args.max_auc_drop)
     if not certification_passed:
         selected = {
-            "policy": "Full-fallback-after-independent-certification",
+            "policy": "Fixed-K-Full",
             "deployment_mode": "fixed_k_fallback",
             "fixed_K": "Full",
             "history_cost_ratio": 1.0,
