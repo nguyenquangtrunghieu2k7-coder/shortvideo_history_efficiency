@@ -302,6 +302,36 @@ def main():
         repeats=args.bootstrap_repeats, random_state=args.bootstrap_seed + 5000,
     )
     candidate_policy_name = selected["policy"]
+
+    # Persist the pre-fallback candidate decisions on certification rows.
+    # This is an exploratory diagnostic artifact: certification has already
+    # been used for the V3 gate and must not be reused as an untouched holdout.
+    diagnostic_dir = ROOT / "data" / "processed" / "phase9_v3"
+    diagnostic_dir.mkdir(parents=True, exist_ok=True)
+    candidate_decisions = pd.DataFrame({
+        "evaluation_id": [validation.evaluation_ids[i] for i in certification_idx],
+        "user_id": [validation.user_ids[i] for i in certification_idx],
+        "candidate_policy": candidate_policy_name,
+        "candidate_selected_K": [str(K_VALUES[i]) for i in cert_actions],
+        "available_history_length": [len(h) for h in cert_histories],
+        "candidate_selected_history_length": [
+            0 if K_VALUES[action] == 0 else
+            (len(cert_histories[row]) if K_VALUES[action] == "Full" else
+             min(len(cert_histories[row]), int(K_VALUES[action])))
+            for row, action in enumerate(cert_actions)
+        ],
+        "long_view": val_y[certification_idx],
+        "candidate_probability": cert_scores,
+        "full_probability": cert_predictions["Full"],
+    })
+    for k in K_VALUES:
+        candidate_decisions[f"probability_K{k}"] = cert_predictions[k]
+    for feature in FEATURE_NAMES:
+        candidate_decisions[feature] = cert_features[feature].to_numpy()
+    candidate_decisions_path = diagnostic_dir / "adaptive_v3_certification_candidate_decisions.parquet"
+    candidate_decisions.to_parquet(candidate_decisions_path, index=False)
+    print(f"Saved pre-fallback candidate diagnostics: {candidate_decisions_path}")
+
     candidate_certification_passed = bool(cert_low >= -args.max_auc_drop)
     certification_fallback = not candidate_certification_passed
     if certification_fallback:
