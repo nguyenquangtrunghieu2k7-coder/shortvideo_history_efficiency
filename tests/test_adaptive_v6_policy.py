@@ -1,139 +1,103 @@
-# Adaptive History Selector V6 — Pareto Knee-point Protocol
+import numpy as np
+import pandas as pd
 
-## 1. Research objective
+from src.policy.adaptive_v6_policy import (
+    _dominates,
+    _pareto_frontier,
+    _knee_point,
+)
 
-V6 selects a history policy that balances recommendation quality and behavioral-history efficiency. It does not minimize history cost at any quality price, and it does not maximize AUC regardless of history cost.
 
-For policy \(\pi\), define:
+def _row(policy, auc, saving):
+    return {
+        "policy": policy,
+        "auc": auc,
+        "history_saving": saving,
+        "history_cost_ratio": 1.0 - saving,
+    }
 
-- Quality: \(Q(\pi)=AUC(\pi)\).
-- History saving: \(S(\pi)=1-HistoryCost(\pi)/HistoryCost(Full)\).
 
-Both objectives are maximized.
+def test_pareto_frontier_removes_dominated_candidates():
+    candidates = pd.DataFrame([
+        _row("A", 0.90, 0.10),
+        _row("B", 0.85, 0.05),
+        _row("C", 0.80, 0.70),
+        _row("D", 0.70, 0.90),
+    ])
+    frontier, duplicate_count = _pareto_frontier(candidates)
+    assert set(frontier["policy"]) == {"A", "C", "D"}
+    assert duplicate_count == 0
+    assert _dominates(_row("A", 0.90, 0.10), _row("B", 0.85, 0.05)) is True
 
-## 2. Data protocol and leakage controls
 
-V6 inherits the V4 data and model protocol:
+def test_duplicate_coordinates_are_collapsed_deterministically():
+    candidates = pd.DataFrame([
+        {**_row("z-policy", 0.90, 0.10), "history_cost_ratio": 0.90},
+        {**_row("a-policy", 0.90, 0.10), "history_cost_ratio": 0.90},
+        {**_row("middle", 0.80, 0.80), "history_cost_ratio": 0.20},
+    ])
+    frontier, duplicate_count = _pareto_frontier(candidates)
+    assert duplicate_count == 1
+    assert "a-policy" in set(frontier["policy"])
+    assert "z-policy" not in set(frontier["policy"])
 
-1. Use the same frozen recommender checkpoints, feature construction, candidate actions, user-disjoint validation split, and uplift-predictor training procedure as V4.
-2. Keep predictor development and policy-tuning users disjoint. Keep the inner uplift-model fit and model-selection groups disjoint.
-3. Use only the validation policy-tuning partition to calculate candidate policy AUC, history cost, feasibility, Pareto dominance, and the knee point.
-4. Do not use held-out test labels, predictions, AUC, history cost, or bootstrap results to select or modify the policy.
-5. Freeze the selected policy and its parameters before evaluating the held-out test split once.
 
-The test bootstrap confidence interval is post-selection inference only. It must not trigger a policy change.
+def test_knee_point_selects_bend_when_curve_is_on_either_chord_side():
+    # Same geometric bend, mirrored around the endpoint chord.
+    for knee_auc in (0.80, 0.62):
+        frontier = pd.DataFrame([
+            _row("quality-end", 0.90, 0.00),
+            _row("knee", knee_auc, 0.80),
+            _row("saving-end", 0.60, 1.00),
+        ])
+        selected, annotated, reason = _knee_point(frontier)
+        assert reason is None
+        assert selected["policy"] == "knee"
+        assert selected["knee_distance"] > 0
+        assert annotated["signed_knee_distance"].notna().sum() == 1
 
-## 3. Candidate generation
 
-Generate the same candidate family as V4:
+def test_knee_point_identifies_bend_in_observed_v5_frontier_shape():
+    frontier = pd.DataFrame([
+        _row("Full", 0.6485928545, 0.000000),
+        _row("lambda-0", 0.6312650896, 0.250790),
+        _row("lambda-0011", 0.6286983, 0.268633),
+        _row("lambda-0203", 0.6264047, 0.298559),
+        _row("lambda-0492", 0.62568894, 0.482877),
+        _row("lambda-0661", 0.62297708, 0.574135),
+    ])
+    selected, annotated, reason = _knee_point(frontier)
+    assert reason is None
+    assert selected["policy"] == "lambda-0203"
+    assert selected["knee_distance"] > annotated["knee_distance"].dropna().median()
 
-- Fixed-K policies for K = 0, 1, 5, 10, 20, 50, 100, Full.
-- Learned policies generated from the V4 uplift predictor over the predeclared lambda grid (default 41 values, including lambda = 0).
 
-No candidate grid or threshold may be changed after inspecting test results.
+def test_knee_point_falls_back_for_nearly_linear_frontier():
+    frontier = pd.DataFrame([
+        _row("quality-end", 0.90, 0.00),
+        _row("middle", 0.80, 0.50),
+        _row("saving-end", 0.70, 1.00),
+    ])
+    selected, annotated, reason = _knee_point(frontier)
+    assert selected is None
+    assert reason == "frontier_nearly_linear_no_stable_knee"
 
-## 4. Feasibility constraint
+def test_knee_point_uses_full_fallback_when_frontier_has_too_few_points():
+    frontier = pd.DataFrame([
+        _row("quality-end", 0.90, 0.00),
+        _row("saving-end", 0.60, 1.00),
+    ])
+    selected, annotated, reason = _knee_point(frontier)
+    assert selected is None
+    assert reason == "fewer_than_three_distinct_pareto_points"
 
-Retain the predeclared V4 validation quality constraint:
 
-\[
-AUC(\pi) \ge AUC(Full)-\delta, \qquad \delta=0.03.
-\]
-
-Feasibility is evaluated using the point estimate on the validation policy-tuning partition. Full is always included as a feasible reference candidate. The threshold is fixed before test evaluation.
-
-## 5. Pareto frontier construction
-
-For each feasible candidate, calculate:
-
-\[
-Q_i=AUC(\pi_i), \qquad
-S_i=1-\frac{HistoryCost(\pi_i)}{HistoryCost(Full)}.
-\]
-
-A candidate is Pareto-dominated if another feasible candidate has both:
-
-- quality greater than or equal to its quality; and
-- history saving greater than or equal to its history saving;
-
-with at least one strict inequality.
-
-Keep only non-dominated candidates. Keep Full in the candidate set; it provides the quality-oriented endpoint (normally zero history saving).
-
-For duplicate (Q, S) coordinates, retain one deterministic representative: higher AUC first, then lower history cost, then lexicographically smaller policy identifier. Record how many duplicates were collapsed.
-
-## 6. Knee-point detection
-
-Order the distinct Pareto points by increasing history saving. Identify:
-
-- A: the quality-oriented endpoint (maximum AUC; deterministic tie-break by lower history cost).
-- B: the history-saving endpoint (maximum history saving; deterministic tie-break by higher AUC).
-
-Normalize each objective over the Pareto frontier:
-
-\[
-x_i=\frac{S_i-S_{min}}{S_{max}-S_{min}}, \qquad
-y_i=\frac{Q_i-Q_{min}}{Q_{max}-Q_{min}}.
-\]
-
-For each interior point, calculate its signed perpendicular distance to the endpoint chord:
-
-\[
-d_i=\frac{(B_x-A_x)(P_{iy}-A_y)-(B_y-A_y)(P_{ix}-A_x)}
-{\sqrt{(B_x-A_x)^2+(B_y-A_y)^2}}.
-\]
-
-The sign only describes which side of the chord the point lies on. It depends on frontier orientation and is **not** a criterion for accepting or rejecting a knee. Define the geometric knee score as:
-
-\[
-K_i=|d_i|.
-\]
-
-Select the interior point with the largest (K_i). Tie-break by higher validation AUC, then higher history saving, then lexicographically smaller policy identifier. Retain both signed distance and absolute knee score in the frontier output for diagnostics.
-
-A maximum distance alone can still force a knee onto an almost-linear frontier. Therefore, if the maximum normalized distance is below 0.01, treat the knee as not reliably identifiable and use Full fallback. This threshold is defined on normalized objective coordinates and is independent of held-out test results.
-
-### Degenerate or non-identifiable cases
-
-- If fewer than three distinct Pareto points remain, a knee is not identifiable.
-- If either objective has zero range, normalization is undefined and a knee is not identifiable.
-- If the maximum absolute perpendicular distance is below 0.01, the frontier is treated as nearly linear and no stable knee is declared.
-- In any non-identifiable case, select Full as the conservative fallback and record the reason.
-
-The implementation must validate finite inputs, positive Full history cost, and valid AUC-drop tolerance. It must handle duplicate points and floating-point tolerances explicitly.
-
-## 7. Validation outputs
-
-Save a complete candidate table and a Pareto-frontier table containing at least:
-
-- policy identifier, policy type, lambda or fixed K;
-- validation AUC and AUC delta versus Full;
-- history cost ratio, history saving, and mean history interactions;
-- feasibility flag and Pareto-frontier membership;
-- normalized quality and saving coordinates;
-- signed knee distance and absolute knee score;
-- selected-for-test flag and knee/fallback status.
-
-Also save the selected policy metadata, endpoint identifiers, number of feasible candidates, number of Pareto points, duplicate count, and fallback reason if applicable.
-
-## 8. Held-out test evaluation
-
-After freezing the validation-selected policy, apply it unchanged to test. Report:
-
-- AUC and logloss;
-- mean and total history interactions;
-- history reduction and cost ratio versus Full;
-- selected-K distribution;
-- paired, class-stratified bootstrap 90% CI for AUC(policy) - AUC(Full).
-
-The confidence interval is descriptive/post-hoc and cannot be used to retune V6.
-
-## 9. Interpretation boundaries
-
-History interactions are a proxy for computational work, not a direct measurement of cloud monetary cost, energy, or end-to-end latency. The experiment uses offline inference with frozen recommender checkpoints; it is not evidence of online serving or Bloom-FaaS performance.
-
-Bloom-FaaS integration must be evaluated as a separate system-level component. Do not attribute additional savings, latency improvements, or energy reductions to Bloom unless those quantities are measured in an integrated experiment.
-
-## 10. Comparison with earlier versions
-
-Report V3, V4, and V6 using their own frozen validation-selected policies and the same held-out test split/protocol where applicable. Do not compare V6 validation results against V3/V4 test results. V6's main methodological change is the validation selection rule: a Pareto knee rather than minimum feasible history cost (V3) or weighted geometric utility (V4).
+def test_knee_point_rejects_zero_objective_range():
+    frontier = pd.DataFrame([
+        _row("a", 0.90, 0.00),
+        _row("b", 0.90, 0.50),
+        _row("c", 0.90, 1.00),
+    ])
+    selected, annotated, reason = _knee_point(frontier)
+    assert selected is None
+    assert reason == "zero_auc_range"
