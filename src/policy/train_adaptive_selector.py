@@ -315,26 +315,31 @@ def main():
     vocab, vocab_map = baseline.load_video_vocab()
     vocab_size = len(vocab)
 
-    print("\nLoading validation and test requests using Full histories...")
+    print("\nLoading validation requests using Full histories...")
     validation = baseline.KuaiRandDataset("validation", "Full", vocab_map)
-    test = baseline.KuaiRandDataset("test", "Full", vocab_map)
     validation.split_name = "validation"
-    test.split_name = "test"
-
     val_y = np.asarray(validation.labels, dtype=np.int64)
-    test_y = np.asarray(test.labels, dtype=np.int64)
 
-    print("\nBuilding request-time features...")
+    print("\nBuilding validation request-time features...")
     val_features = history_features(
         validation.history_ids, validation.candidate_ids
-    )
-    test_features = history_features(
-        test.history_ids, test.candidate_ids
     )
 
     print("\nGenerating validation predictions from frozen K models...")
     val_predictions = collect_predictions(
         validation, vocab_size, device, args.batch_size
+    )
+    # Release the large Python history lists before loading the test split.
+    del validation
+
+    print("\nLoading held-out test requests using Full histories...")
+    test = baseline.KuaiRandDataset("test", "Full", vocab_map)
+    test.split_name = "test"
+    test_y = np.asarray(test.labels, dtype=np.int64)
+
+    print("\nBuilding test request-time features...")
+    test_features = history_features(
+        test.history_ids, test.candidate_ids
     )
 
     print("\nGenerating test predictions from frozen K models...")
