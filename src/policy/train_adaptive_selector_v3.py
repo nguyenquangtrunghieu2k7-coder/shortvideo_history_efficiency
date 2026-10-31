@@ -134,7 +134,42 @@ def main():
         validation, vocab_size, device, args.batch_size
     )
 
-    # Use validation for model development and policy selection only.\n    # The held-out test split is evaluated once after the policy is frozen.\n    from sklearn.model_selection import train_test_split\n    development_idx, tuning_idx = train_test_split(\n        np.arange(len(val_y)), test_size=0.50,\n        random_state=args.random_state, stratify=val_y,\n    )\n    development_features = val_features.iloc[development_idx].reset_index(drop=True)\n    development_predictions = {k: val_predictions[k][development_idx] for k in K_VALUES}\n    development_y = val_y[development_idx]\n\n    print(\n        f"\\nValidation roles: development={len(development_idx)}, policy-tuning={len(tuning_idx)}"\n    )\n    model, model_name, model_table = fit_auc_uplift_predictor(\n        development_features, development_y, development_predictions, args, FEATURE_NAMES\n    )\n    print(f"Selected uplift model: {model_name}")\n    print(model_table.to_string(index=False))\n\n    tuning_features = val_features.iloc[tuning_idx].reset_index(drop=True)\n    tuning_predictions = {k: val_predictions[k][tuning_idx] for k in K_VALUES}\n    tuning_histories = [validation.history_ids[i] for i in tuning_idx]\n    tuning_uplift = predict_auc_uplift(model, tuning_features, FEATURE_NAMES)\n    selected, policy_table, cost_scale, tuning_full_auc = calibrate_policy(\n        val_y[tuning_idx], tuning_predictions, tuning_histories, tuning_uplift,\n        max_auc_drop=args.max_auc_drop,\n        lambda_steps=args.lambda_steps,\n        bootstrap_repeats=args.bootstrap_repeats,\n        random_state=args.bootstrap_seed,\n    )\n    selected["validation_full_auc"] = tuning_full_auc\n    selected["validation_auc_drop_tolerance"] = args.max_auc_drop\n    print("\\nSelected policy from validation tuning:")\n    print(json.dumps(selected, indent=2, default=str))\n\n    print("\nLoading held-out test requests...")
+    # Use validation for model development and policy selection only.
+    # The held-out test split is evaluated once after the policy is frozen.
+    from sklearn.model_selection import train_test_split
+    development_idx, tuning_idx = train_test_split(
+        np.arange(len(val_y)), test_size=0.50,
+        random_state=args.random_state, stratify=val_y,
+    )
+    development_features = val_features.iloc[development_idx].reset_index(drop=True)
+    development_predictions = {k: val_predictions[k][development_idx] for k in K_VALUES}
+    development_y = val_y[development_idx]
+
+    print(
+        f"\nValidation roles: development={len(development_idx)}, "
+        f"policy-tuning={len(tuning_idx)}"
+    )
+    model, model_name, model_table = fit_auc_uplift_predictor(
+        development_features, development_y, development_predictions, args, FEATURE_NAMES
+    )
+    print(f"Selected uplift model: {model_name}")
+    print(model_table.to_string(index=False))
+
+    tuning_features = val_features.iloc[tuning_idx].reset_index(drop=True)
+    tuning_predictions = {k: val_predictions[k][tuning_idx] for k in K_VALUES}
+    tuning_histories = [validation.history_ids[i] for i in tuning_idx]
+    tuning_uplift = predict_auc_uplift(model, tuning_features, FEATURE_NAMES)
+    selected, policy_table, cost_scale, tuning_full_auc = calibrate_policy(
+        val_y[tuning_idx], tuning_predictions, tuning_histories, tuning_uplift,
+        max_auc_drop=args.max_auc_drop,
+        lambda_steps=args.lambda_steps,
+    )
+    selected["validation_full_auc"] = tuning_full_auc
+    selected["validation_auc_drop_tolerance"] = args.max_auc_drop
+    print("\nSelected policy from validation tuning:")
+    print(json.dumps(selected, indent=2, default=str))
+
+    print("\nLoading held-out test requests...")
     test = baseline.KuaiRandDataset("test", "Full", vocab_map)
     test.split_name = "test"
     test_y = np.asarray(test.labels, dtype=np.int8)
