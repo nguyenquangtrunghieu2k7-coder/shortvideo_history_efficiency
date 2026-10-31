@@ -290,7 +290,7 @@ Test paired-bootstrap 90% CI vs Full: `[-0.038820, -0.011789]`.
 V6 keeps the V5 Pareto-knee strategy but strengthens feasibility. A candidate must satisfy both:
 
 $$
-\Delta AUC\geq -0.03 \quad\text{and}\quad LCB_{90\%}(\Delta AUC)\geq -0.03.
+\Delta AUC\geq -0.03 \quad\text{and}\quad LCB_{90}(\Delta AUC)\geq -0.03.
 $$
 
 The validation LCB is the 5th percentile of a class-stratified paired-bootstrap distribution, using 1,000 repetitions by default and seed 2026.
