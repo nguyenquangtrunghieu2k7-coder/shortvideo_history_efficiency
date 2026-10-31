@@ -229,11 +229,11 @@ $$AUC(\pi)\geq AUC(Full)-\delta,\qquad \delta=0.03.$$
 
 Normalized quality retention:
 
-$$Q(\pi)=\operatorname{clip}\left( \frac{AUC(\pi)-[AUC(Full)-\delta]}{\delta},0,1 \right).$$
+$$Q(\pi)=\mathrm{clip}\left( \frac{AUC(\pi)-[AUC(Full)-\delta]}{\delta},0,1 \right).$$
 
 Normalized history saving:
 
-$$S(\pi)=\operatorname{clip}\left( 1-\frac{HistoryCost(\pi)}{HistoryCost(Full)},0,1 \right).$$
+$$S(\pi)=\mathrm{clip}\left( 1-\frac{HistoryCost(\pi)}{HistoryCost(Full)},0,1 \right).$$
 
 Balanced geometric utility:
 
