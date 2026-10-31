@@ -53,7 +53,7 @@ def parse_args():
     p.add_argument("--bootstrap-seed", type=int, default=2026)
     p.add_argument(
         "--audit-splits-only", action="store_true",
-        help="Audit user overlap in current row-level validation splits and exit before model inference.",
+        help="Audit user overlap in the group-disjoint validation splits and exit before model inference.",
     )
     return p.parse_args()
 
@@ -113,7 +113,7 @@ def collect_predictions(dataset, vocab_size, device, batch_size):
 
 
 def report_split_overlap(name, left_groups, right_groups, left_y, right_y):
-    """Report same-user overlap across the two sides of a row-level split."""
+    """Report same-user overlap across the two sides of a validation split."""
     left_groups = np.asarray(left_groups)
     right_groups = np.asarray(right_groups)
     overlap = np.intersect1d(np.unique(left_groups), np.unique(right_groups))
