@@ -282,7 +282,13 @@ def stratified_paired_auc_difference_ci(y_true, policy_scores, full_scores,
 def calibrate_policy(y_true, predictions, histories, uplift_predictions,
                      max_auc_drop, lambda_steps, bootstrap_repeats,
                      random_state=42):
-    """Screen candidates by validation point AUC; certify the chosen policy on a separate split."""
+    """Select the highest-quality candidate that passes tuning non-inferiority.
+
+    Both the point-estimate AUC constraint and paired-bootstrap lower-bound
+    constraint must pass. Among those candidates, maximize global tuning AUC;
+    use lower history cost only as a tie-breaker. Independent certification
+    remains the final gate.
+    """
     y = np.asarray(y_true, dtype=np.int8)
     full_scores = np.asarray(predictions["Full"], dtype=float)
     full_auc = float(roc_auc_score(y, full_scores))
@@ -297,6 +303,8 @@ def calibrate_policy(y_true, predictions, histories, uplift_predictions,
             random_state=random_state + len(candidates),
         )
         delta = metrics["auc"] - full_auc
+        point_feasible = bool(delta >= -float(max_auc_drop))
+        ci_feasible = bool(ci_low >= -float(max_auc_drop))
         candidates.append({
             "policy": name,
             "policy_type": kind,
@@ -309,10 +317,9 @@ def calibrate_policy(y_true, predictions, histories, uplift_predictions,
             "history_cost_ratio": metrics["history_cost_ratio"],
             "history_reduction_vs_full": metrics["history_reduction_vs_full"],
             "mean_history_interactions": metrics["mean_history_interactions"],
-            # Tune by point-estimate non-inferiority; the untouched
-            # certification split supplies the actual statistical gate.
-            "feasible": bool(delta >= -float(max_auc_drop)),
-            "ci_feasible_on_tuning": bool(ci_low >= -float(max_auc_drop)),
+            "feasible": point_feasible,
+            "ci_feasible_on_tuning": ci_feasible,
+            "selection_feasible": bool(point_feasible and ci_feasible),
         })
 
     for k in K_VALUES:
@@ -325,40 +332,22 @@ def calibrate_policy(y_true, predictions, histories, uplift_predictions,
         add_candidate("learned", f"V3-lambda-{penalty:.8g}", actions, penalty=float(penalty))
 
     table = pd.DataFrame(candidates)
-    feasible = table[table["feasible"]].copy()
-    if feasible.empty:
-        # Full should always be feasible because its paired delta is exactly zero.
-        raise RuntimeError("No feasible policy found, including the Full baseline.")
-    feasible = feasible.sort_values(
-        ["history_cost_ratio", "auc", "policy_type"],
-        ascending=[True, False, True],
+    eligible = table[table["selection_feasible"]].copy()
+    if eligible.empty:
+        # Full must pass: its AUC delta and paired difference are exactly zero.
+        raise RuntimeError("No policy passed tuning constraints, including Full.")
+
+    # Quality first. History cost is only a tie-breaker, not the objective.
+    eligible = eligible.sort_values(
+        ["auc", "history_cost_ratio"],
+        ascending=[False, True],
     ).reset_index(drop=True)
-    selected = feasible.iloc[0].to_dict()
-
-    best_fixed = table[(table["policy_type"] == "fixed") & table["feasible"]].sort_values(
-        ["history_cost_ratio", "auc"], ascending=[True, False]
-    ).iloc[0]
-    best_learned_rows = table[(table["policy_type"] == "learned") & table["feasible"]]
-    best_learned = (
-        best_learned_rows.sort_values(
-            ["history_cost_ratio", "auc"], ascending=[True, False]
-        ).iloc[0].to_dict()
-        if not best_learned_rows.empty else None
+    selected = eligible.iloc[0].to_dict()
+    selected["deployment_mode"] = (
+        "learned_adaptive" if selected["policy_type"] == "learned"
+        else "fixed_k_fallback"
     )
-
-    # Keep the learned policy only when it strictly improves cost over the
-    # best feasible fixed-K baseline. Otherwise report a fixed-K fallback.
-    if (best_learned is not None and
-            best_learned["history_cost_ratio"] < float(best_fixed["history_cost_ratio"]) - 1e-9):
-        selected = best_learned
-        selected["deployment_mode"] = "learned_adaptive"
-    else:
-        selected = best_fixed.to_dict()
-        selected["deployment_mode"] = "fixed_k_fallback"
-
-    table["selected_for_test"] = (
-        (table["policy"] == selected["policy"])
-    )
+    table["selected_for_test"] = table["policy"].eq(selected["policy"])
     return selected, table, mean_full_length, full_auc
 
 
