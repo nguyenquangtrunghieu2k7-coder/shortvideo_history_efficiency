@@ -26,7 +26,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.ensemble import ExtraTreesRegressor
+from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.metrics import log_loss, mean_absolute_error, mean_squared_error, r2_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 
@@ -53,10 +53,8 @@ def parse_args():
     parser.add_argument("--min-samples-leaf", type=int, default=20)
     parser.add_argument("--calibration-fraction", type=float, default=0.30)
     parser.add_argument(
-        "--max-auc-drop",
-        type=float,
-        default=0.01,
-        help="Maximum allowed calibration AUC drop from the Full model.",
+        "--budget-weight", type=float, default=0.005,
+        help="Weight for normalized mean history cost in calibration utility.",
     )
     parser.add_argument(
         "--lambda-max",
@@ -148,21 +146,78 @@ def make_loss_matrix(y_true, predictions):
     ])
 
 
-def quality_prediction_diagnostics(actual_loss_matrix, predicted_loss_matrix, split_name):
-    """Post-hoc quality-predictor diagnostics; never used to select K."""
+def make_relative_loss_targets(loss_matrix):
+    """Per-request logloss deltas against Full; negative means better than Full."""
+    losses = np.asarray(loss_matrix, dtype=np.float64)
+    return losses[:, :-1] - losses[:, [-1]]
+
+
+def target_clip_bounds(targets):
+    """Robust target bounds learned only from predictor-fit data."""
+    return (
+        np.quantile(targets, 0.01, axis=0),
+        np.quantile(targets, 0.99, axis=0),
+    )
+
+
+def fit_quality_predictor(features, loss_matrix, labels, args):
+    """Select ExtraTrees or RandomForest on an inner split, then refit."""
+    targets = make_relative_loss_targets(loss_matrix)
+    fit_ids, select_ids = train_test_split(
+        np.arange(len(targets)), test_size=0.20,
+        random_state=args.random_state + 1, stratify=np.asarray(labels),
+    )
+    candidates = {
+        "ExtraTrees": ExtraTreesRegressor(
+            n_estimators=args.trees, min_samples_leaf=args.min_samples_leaf,
+            max_features=0.9, random_state=args.random_state, n_jobs=-1,
+        ),
+        "RandomForest": RandomForestRegressor(
+            n_estimators=args.trees, min_samples_leaf=args.min_samples_leaf,
+            max_features=0.9, random_state=args.random_state, n_jobs=-1,
+        ),
+    }
     rows = []
-    for index, k in enumerate(K_VALUES):
-        actual = np.asarray(actual_loss_matrix[:, index], dtype=np.float64)
-        predicted = np.asarray(predicted_loss_matrix[:, index], dtype=np.float64)
+    for name, model in candidates.items():
+        lo, hi = target_clip_bounds(targets[fit_ids])
+        model.fit(features.iloc[fit_ids][FEATURE_NAMES],
+                  np.clip(targets[fit_ids], lo, hi))
+        pred = model.predict(features.iloc[select_ids][FEATURE_NAMES])
         rows.append({
-            "split": split_name,
-            "K": str(k),
-            "n_requests": len(actual),
-            "actual_mean_logloss": float(actual.mean()),
-            "predicted_mean_logloss": float(predicted.mean()),
-            "mae": float(mean_absolute_error(actual, predicted)),
-            "rmse": float(np.sqrt(mean_squared_error(actual, predicted))),
-            "r2": float(r2_score(actual, predicted)) if len(actual) > 1 else float("nan"),
+            "model": name,
+            "selection_mae": float(mean_absolute_error(targets[select_ids], pred)),
+            "selection_rmse": float(np.sqrt(mean_squared_error(targets[select_ids], pred))),
+        })
+    selection = pd.DataFrame(rows).sort_values(
+        ["selection_mae", "selection_rmse"]
+    ).reset_index(drop=True)
+    name = str(selection.iloc[0]["model"])
+    model = candidates[name]
+    lo, hi = target_clip_bounds(targets)
+    model.fit(features[FEATURE_NAMES], np.clip(targets, lo, hi))
+    return model, lo, hi, name, selection
+
+
+def predict_relative_losses(model, features, lower, upper):
+    pred = np.clip(model.predict(features[FEATURE_NAMES]), lower, upper)
+    return np.column_stack([pred, np.zeros(len(pred), dtype=np.float64)])
+
+
+def quality_prediction_diagnostics(actual_loss_matrix, predicted_delta_matrix, split_name):
+    actual = make_relative_loss_targets(actual_loss_matrix)
+    predicted = np.asarray(predicted_delta_matrix, dtype=np.float64)[:, :-1]
+    rows = []
+    for index, k in enumerate(K_VALUES[:-1]):
+        y, p = actual[:, index], predicted[:, index]
+        rows.append({
+            "split": split_name, "target": "logloss_K_minus_logloss_Full",
+            "K": str(k), "n_requests": len(y),
+            "actual_mean_delta_logloss": float(y.mean()),
+            "predicted_mean_delta_logloss": float(p.mean()),
+            "mae": float(mean_absolute_error(y, p)),
+            "rmse": float(np.sqrt(mean_squared_error(y, p))),
+            "r2": float(r2_score(y, p)) if len(y) > 1 else float("nan"),
+            "better_than_full_sign_accuracy": float(np.mean((y < 0) == (p < 0))),
         })
     return rows
 
@@ -250,50 +305,33 @@ def fixed_k_metrics(y_true, predictions, histories, k):
 
 
 def calibrate_penalty(
-    y_true,
-    predictions,
-    predicted_losses,
-    histories,
-    max_auc_drop,
-    lambda_max,
-    lambda_steps,
-    cost_scale,
+    y_true, predictions, predicted_relative_losses, histories,
+    budget_weight, lambda_max, lambda_steps, cost_scale,
 ):
+    """Minimize validation logloss + weighted normalized history cost."""
     cost = history_cost_fraction(histories, cost_scale)
     full_auc = metric_auc(y_true, predictions["Full"])
     candidates = []
-
     for penalty in np.linspace(0.0, lambda_max, lambda_steps):
-        selected = choose_k(predicted_losses, cost, penalty)
+        selected = choose_k(predicted_relative_losses, cost, penalty)
         metrics, _, _ = evaluate_policy(
             y_true, predictions, histories, selected, f"lambda={penalty:.6f}"
         )
-        feasible = metrics["auc"] >= full_auc - max_auc_drop
+        cost_fraction = float(np.mean(cost[np.arange(len(selected)), selected]))
         candidates.append({
-            "lambda": float(penalty),
-            "auc": metrics["auc"],
+            "lambda": float(penalty), "auc": metrics["auc"],
             "logloss": metrics["logloss"],
+            "mean_history_cost_fraction": cost_fraction,
             "history_reduction_vs_full": metrics["history_reduction_vs_full"],
             "mean_history_interactions": metrics["mean_history_interactions"],
-            "feasible": bool(feasible),
+            "budget_weight": float(budget_weight),
+            "calibration_utility": float(metrics["logloss"] + budget_weight * cost_fraction),
         })
-
     table = pd.DataFrame(candidates)
-    feasible_table = table[table["feasible"]]
-    if not feasible_table.empty:
-        best = feasible_table.sort_values(
-            ["mean_history_interactions", "auc", "lambda"],
-            ascending=[True, False, True],
-        ).iloc[0]
-        status = "auc_constraint_satisfied"
-    else:
-        best = table.sort_values(
-            ["auc", "mean_history_interactions"],
-            ascending=[False, True],
-        ).iloc[0]
-        status = "no_lambda_met_auc_constraint"
-
-    return float(best["lambda"]), table, full_auc, status
+    best = table.sort_values(
+        ["calibration_utility", "logloss", "mean_history_interactions"]
+    ).iloc[0]
+    return float(best["lambda"]), table, full_auc, "quality_budget_utility_minimum"
 
 
 def main():
@@ -302,8 +340,8 @@ def main():
         raise ValueError("batch-size/trees must be positive and lambda-steps >= 2")
     if not 0.0 < args.calibration_fraction < 1.0:
         raise ValueError("calibration-fraction must be between 0 and 1")
-    if args.max_auc_drop < 0 or args.lambda_max < 0:
-        raise ValueError("max-auc-drop and lambda-max must be non-negative")
+    if args.budget_weight < 0 or args.lambda_max < 0:
+        raise ValueError("budget-weight and lambda-max must be non-negative")
 
     print("=" * 80)
     print("ADAPTIVE HISTORY SELECTOR V2 — QUALITY PREDICTION + COST POLICY")
@@ -338,20 +376,16 @@ def main():
         f"\nValidation split: predictor-fit={len(fit_indices)}, "
         f"policy-calibration={len(calibration_indices)}"
     )
-    predictor = ExtraTreesRegressor(
-        n_estimators=args.trees,
-        min_samples_leaf=args.min_samples_leaf,
-        max_features=0.9,
-        random_state=args.random_state,
-        n_jobs=-1,
+    predictor, target_lower, target_upper, predictor_name, model_selection_table = (
+        fit_quality_predictor(
+            val_features.iloc[fit_indices].reset_index(drop=True),
+            val_loss_matrix[fit_indices], val_y[fit_indices], args,
+        )
     )
-    predictor.fit(
-        val_features.iloc[fit_indices][FEATURE_NAMES],
-        val_loss_matrix[fit_indices],
-    )
-
-    calibration_loss_predictions = predictor.predict(
-        val_features.iloc[calibration_indices][FEATURE_NAMES]
+    print(f"Selected quality predictor: {predictor_name}")
+    print(model_selection_table.to_string(index=False))
+    calibration_loss_predictions = predict_relative_losses(
+        predictor, val_features.iloc[calibration_indices], target_lower, target_upper
     )
     calibration_predictions = {
         k: val_predictions[k][calibration_indices] for k in K_VALUES
@@ -369,14 +403,14 @@ def main():
             calibration_predictions,
             calibration_loss_predictions,
             calibration_histories,
-            args.max_auc_drop,
+            args.budget_weight,
             args.lambda_max,
             args.lambda_steps,
             calibration_cost_scale,
         )
     )
     print(f"Calibrated lambda: {penalty:.6f} ({calibration_status})")
-    print(f"Calibration Full AUC: {calibration_full_auc:.6f}")
+    print(f"Calibration Full AUC (reference only): {calibration_full_auc:.6f}")
 
     print("\nLoading held-out test requests...")
     test = baseline.KuaiRandDataset("test", "Full", vocab_map)
@@ -388,7 +422,9 @@ def main():
     test_predictions = collect_predictions(
         test, vocab_size, device, args.batch_size
     )
-    test_predicted_losses = predictor.predict(test_features[FEATURE_NAMES])
+    test_predicted_losses = predict_relative_losses(
+        predictor, test_features, target_lower, target_upper
+    )
     test_actual_losses = make_loss_matrix(test_y, test_predictions)
     test_cost = history_cost_fraction(test.history_ids, calibration_cost_scale)
     test_selected = choose_k(test_predicted_losses, test_cost, penalty)
@@ -402,6 +438,8 @@ def main():
     )
     adaptive_metrics["selected_lambda"] = penalty
     adaptive_metrics["calibration_status"] = calibration_status
+    adaptive_metrics["quality_predictor"] = predictor_name
+    adaptive_metrics["budget_weight"] = args.budget_weight
 
     # Oracle is strictly post-hoc: it uses test labels only for diagnostics and
     # is never used to select the deployed/test policy.
@@ -422,6 +460,7 @@ def main():
     calibration_path = output_dir / "adaptive_v2_lambda_calibration.csv"
     importance_path = output_dir / "adaptive_v2_feature_importance.csv"
     quality_diagnostics_path = output_dir / "adaptive_v2_quality_diagnostics.csv"
+    model_selection_path = output_dir / "adaptive_v2_model_selection.csv"
     model_path = model_dir / "adaptive_history_selector_v2.joblib"
 
     pd.DataFrame(rows).to_csv(metrics_path, index=False)
@@ -440,14 +479,14 @@ def main():
         "oracle_best_actual_logloss_posthoc": oracle_actual_losses,
         "actual_logloss_regret_posthoc": actual_loss_regret,
         "selected_is_actual_best_posthoc": test_selected == oracle_indices,
-        "predicted_loss_K0": test_predicted_losses[:, 0],
-        "predicted_loss_K1": test_predicted_losses[:, 1],
-        "predicted_loss_K5": test_predicted_losses[:, 2],
-        "predicted_loss_K10": test_predicted_losses[:, 3],
-        "predicted_loss_K20": test_predicted_losses[:, 4],
-        "predicted_loss_K50": test_predicted_losses[:, 5],
-        "predicted_loss_K100": test_predicted_losses[:, 6],
-        "predicted_loss_KFull": test_predicted_losses[:, 7],
+        "predicted_delta_logloss_K0_vs_Full": test_predicted_losses[:, 0],
+        "predicted_delta_logloss_K1_vs_Full": test_predicted_losses[:, 1],
+        "predicted_delta_logloss_K5_vs_Full": test_predicted_losses[:, 2],
+        "predicted_delta_logloss_K10_vs_Full": test_predicted_losses[:, 3],
+        "predicted_delta_logloss_K20_vs_Full": test_predicted_losses[:, 4],
+        "predicted_delta_logloss_K50_vs_Full": test_predicted_losses[:, 5],
+        "predicted_delta_logloss_K100_vs_Full": test_predicted_losses[:, 6],
+        "predicted_delta_logloss_KFull_vs_Full": test_predicted_losses[:, 7],
         "probability_K0": test_predictions[0],
         "probability_K1": test_predictions[1],
         "probability_K5": test_predictions[5],
@@ -484,6 +523,7 @@ def main():
     pd.DataFrame(quality_diagnostics).to_csv(
         quality_diagnostics_path, index=False
     )
+    model_selection_table.to_csv(model_selection_path, index=False)
 
     pd.DataFrame({
         "feature": FEATURE_NAMES,
@@ -494,15 +534,18 @@ def main():
 
     joblib.dump({
         "predictor": predictor,
+        "predictor_name": predictor_name,
         "feature_names": FEATURE_NAMES,
         "k_values": K_VALUES,
         "lambda": penalty,
+        "budget_weight": args.budget_weight,
+        "target_clip_lower": target_lower,
+        "target_clip_upper": target_upper,
         "cost_normalization_scale": calibration_cost_scale,
-        "max_auc_drop": args.max_auc_drop,
         "calibration_status": calibration_status,
-        "calibration_full_auc": calibration_full_auc,
+        "calibration_full_auc_reference": calibration_full_auc,
         "cost_definition": "selected interactions normalized by fixed mean Full-history length from validation calibration",
-        "target_definition": "per-request binary log-loss for each frozen K model",
+        "target_definition": "per-request log-loss delta for each truncated K relative to Full; Full is exact zero reference",
     }, model_path)
 
     print("\n=== HELD-OUT TEST RESULTS ===")
@@ -516,6 +559,7 @@ def main():
     print(f"  Lambda calibration: {calibration_path}")
     print(f"  Feature importance: {importance_path}")
     print(f"  Quality diagnostics: {quality_diagnostics_path}")
+    print(f"  Model selection: {model_selection_path}")
     print(
         "\nProtocol: predictor-fit and lambda calibration use disjoint "
         "validation subsets; test is held out for final evaluation."
@@ -524,6 +568,10 @@ def main():
         "Post-hoc diagnostic caveat: oracle-best K and actual per-request "
         "log-loss use test labels only after policy selection; they are not "
         "available to the deployed selector."
+    )
+    print(
+        "Calibration minimizes validation logloss plus budget-weight times "
+        "normalized mean history cost; AUC is reported, not a hard gate."
     )
     print(
         "Cost caveat: history-interaction reduction is a budget proxy, not "
