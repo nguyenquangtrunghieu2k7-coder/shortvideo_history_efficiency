@@ -8,12 +8,11 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
 from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor, HistGradientBoostingRegressor
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, roc_auc_score, log_loss
+from sklearn.metrics import roc_auc_score, log_loss
 
 
 K_VALUES = [0, 1, 5, 10, 20, 50, 100, "Full"]
