@@ -25,7 +25,10 @@ import joblib
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
+from sklearn.dummy import DummyRegressor
+from sklearn.ensemble import ExtraTreesRegressor, HistGradientBoostingRegressor, RandomForestRegressor
+from sklearn.inspection import permutation_importance
+from sklearn.multioutput import MultiOutputRegressor
 from sklearn.metrics import log_loss, mean_absolute_error, mean_squared_error, r2_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 
@@ -175,6 +178,15 @@ def fit_quality_predictor(features, loss_matrix, labels, args):
             n_estimators=args.trees, min_samples_leaf=args.min_samples_leaf,
             max_features=0.9, random_state=args.random_state, n_jobs=-1,
         ),
+        "HistGradientBoosting": MultiOutputRegressor(
+            HistGradientBoostingRegressor(
+                max_iter=200, learning_rate=0.05, max_leaf_nodes=15,
+                min_samples_leaf=args.min_samples_leaf, l2_regularization=1.0,
+                random_state=args.random_state,
+            ),
+            n_jobs=-1,
+        ),
+        "MeanBaseline": DummyRegressor(strategy="mean"),
     }
     rows = []
     for name, model in candidates.items():
@@ -524,9 +536,22 @@ def main():
     )
     model_selection_table.to_csv(model_selection_path, index=False)
 
+    calibration_relative_targets = make_relative_loss_targets(
+        calibration_actual_losses
+    )
+    permutation = permutation_importance(
+        predictor,
+        val_features.iloc[calibration_indices][FEATURE_NAMES],
+        calibration_relative_targets,
+        scoring="neg_mean_absolute_error",
+        n_repeats=5,
+        random_state=args.random_state,
+        n_jobs=-1,
+    )
     pd.DataFrame({
         "feature": FEATURE_NAMES,
-        "importance": predictor.feature_importances_,
+        "importance": permutation.importances_mean,
+        "importance_std": permutation.importances_std,
     }).sort_values("importance", ascending=False).to_csv(
         importance_path, index=False
     )
