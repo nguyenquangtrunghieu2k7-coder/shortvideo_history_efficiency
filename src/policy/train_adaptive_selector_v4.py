@@ -249,6 +249,14 @@ def main():
         "quality_predictor": model_name,
         "validation_full_auc": tuning_full_auc,
         "validation_auc_drop_tolerance": args.max_auc_drop,
+        "selection_objective": selected["selection_objective"],
+        "quality_weight": args.quality_weight,
+        "history_cost_weight": args.history_cost_weight,
+        "validation_quality_retention": selected["quality_retention"],
+        "validation_history_saving": selected["history_saving"],
+        "validation_balanced_utility": selected["balanced_utility"],
+        "validation_selected_policy_auc": selected["auc"],
+        "validation_selected_policy_history_cost_ratio": selected["history_cost_ratio"],
     })
     result_rows.append(adaptive_metrics)
 
