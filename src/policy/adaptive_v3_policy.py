@@ -282,7 +282,7 @@ def stratified_paired_auc_difference_ci(y_true, policy_scores, full_scores,
 def calibrate_policy(y_true, predictions, histories, uplift_predictions,
                      max_auc_drop, lambda_steps, bootstrap_repeats,
                      random_state=42):
-    """Find minimum-cost policy whose paired-bootstrap AUC lower bound is feasible."""
+    """Screen candidates by validation point AUC; certify the chosen policy on a separate split."""
     y = np.asarray(y_true, dtype=np.int8)
     full_scores = np.asarray(predictions["Full"], dtype=float)
     full_auc = float(roc_auc_score(y, full_scores))
