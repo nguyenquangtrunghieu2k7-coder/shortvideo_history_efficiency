@@ -2,22 +2,25 @@
 
 ## Purpose
 
-V2 replaces V1's direct `request features -> K class` classifier with a
-quality-prediction layer and a separately calibrated cost policy:
+V2 predicts, for each request and each truncated history length, the
+probability that using that K keeps per-request binary log-loss within a
+configured tolerance of the Full-history model:
 
 ```text
 History structure features
           |
           v
-Multi-output quality predictor
-  -> estimated per-request log-loss for each K
+Multi-output quality-acceptance classifier
+  -> P(loss(K) <= loss(Full) + max_logloss_regret)
           |
           v
-Cost-aware policy
-  -> argmin_k predicted_loss(k) + lambda * normalized_history_cost(k)
+Shortest-acceptable-history policy
+  -> choose the smallest K whose acceptance probability clears a threshold
+  -> use Full if no truncated K clears the threshold
           |
           v
-Selected K and frozen recommender score
+Validation calibration
+  -> maximize AUC - budget_weight * normalized_history_cost
 ```
 
 V1 remains unchanged and is the direct-classification baseline.
@@ -26,21 +29,22 @@ V1 remains unchanged and is the direct-classification baseline.
 
 - Request-time features describe history composition, concentration, recency,
   head/tail overlap, novelty, and adjacent repetition.
-- The quality target is now the per-request log-loss difference
-  `loss(K) - loss(Full)`. Full is the exact zero reference, so the model
-  focuses on the relative quality change caused by truncating history rather
-  than predicting each model's noisy absolute loss independently.
-- Targets are winsorized at the 1st/99th percentiles using predictor-fit data
-  only. ExtraTrees, RandomForest, multi-output HistGradientBoosting, and a
-  mean-only DummyRegressor baseline are compared on an inner split of the
-  predictor-fit partition; the lower-MAE model is refit on that full partition.
-  Including the mean baseline prevents selecting a complex model that does not
-  beat a no-feature predictor.
+- For each request and truncated K, the binary target is
+  `loss(K) <= loss(Full) + max_logloss_regret`. The default regret tolerance
+  is 0.05, matching the V1 oracle's initial tolerance and enabling a direct
+  conceptual comparison.
+- ExtraTrees, RandomForest, HistGradientBoosting, and a prior-only
+  DummyClassifier are compared on an inner split of predictor-fit validation
+  data using macro average precision. The selected classifier is refit on the
+  full predictor-fit partition. If the mean baseline wins, the run explicitly
+  warns that request-specific feature signal has not been demonstrated.
 - Validation is split into predictor-fit and policy-calibration subsets.
-  The scalar `lambda` is selected on the second subset by minimizing
-  `calibration_logloss + budget_weight * normalized_mean_history_cost`.
-  AUC is reported as an evaluation metric, not used as a hard feasibility gate.
-  This removes the previous no-feasible-lambda fallback.
+  On the calibration subset, the probability threshold is selected by
+  maximizing `validation_AUC - budget_weight * normalized_mean_history_cost`.
+  The policy chooses the shortest K whose predicted acceptance probability
+  meets that threshold; Full is the safe fallback. K=0 remains eligible.
+- The calibration objective directly includes global AUC, the final ranking
+  metric, instead of assuming that lower log-loss necessarily means higher AUC.
 - Test is held out for the final evaluation only.
 
 The cost penalty uses each candidate K's interaction count divided by the
@@ -62,39 +66,50 @@ Useful options:
 ```bash
 python src/policy/train_adaptive_selector_v2.py \
   --budget-weight 0.005 \
+  --max-logloss-regret 0.05 \
   --calibration-fraction 0.30 \
   --trees 500 \
-  --lambda-max 0.50 \
-  --lambda-steps 101
+  --threshold-steps 101
 ```
 
-The default budget weight controls the trade-off between validation logloss
-and normalized history-interaction budget. It is an explicit utility parameter,
-not a claim that per-request log-loss equals AUC.
+The default budget weight controls the trade-off between validation ROC-AUC
+and normalized history-interaction budget. The regret tolerance defines the
+binary acceptance target; it is not a per-request AUC target.
 
 ## Outputs
 
 - `models/adaptive_history_selector_v2.joblib`
 - `data/processed/phase9_v2/adaptive_v2_metrics.csv`
 - `data/processed/phase9_v2/adaptive_v2_test_decisions.parquet`
-- `data/processed/phase9_v2/adaptive_v2_lambda_calibration.csv`
+- `data/processed/phase9_v2/adaptive_v2_threshold_calibration.csv`
 - `data/processed/phase9_v2/adaptive_v2_feature_importance.csv`
 - `data/processed/phase9_v2/adaptive_v2_quality_diagnostics.csv`
 - `data/processed/phase9_v2/adaptive_v2_model_selection.csv`
 
+The quality diagnostics CSV reports per-K acceptance prevalence, predicted
+acceptance rate, average precision, ROC-AUC, and Brier score on validation
+calibration and held-out test. The model-selection CSV records the inner
+validation comparison between the tree classifiers and the prior-only
+baseline. Feature importance is measured by permutation using macro average
+precision on the policy-calibration subset.
+
 The test decisions Parquet additionally stores:
+- predicted acceptance probabilities for every truncated K;
 - frozen-model probabilities for every K;
 - actual per-request binary log-loss for every K;
 - the selected policy's actual log-loss;
 - a post-hoc oracle-best K and its actual loss;
 - per-request actual-loss regret relative to that oracle.
 
-The oracle fields are strictly post-hoc diagnostics. They use test labels after the policy has already been selected and must never be used as selector inputs, training targets, or tuning signals. The quality diagnostics CSV reports MAE, RMSE, R-squared, and sign accuracy for predicted versus actual per-request loss deltas relative to Full, separately for validation calibration and held-out test. The model-selection CSV records the inner validation comparison between ExtraTrees, RandomForest, HistGradientBoosting, and the mean-only baseline. Feature importance is measured by permutation on the policy-calibration subset.
+The oracle fields are strictly post-hoc diagnostics. They use test labels after
+the policy has already been selected and must never be used as selector inputs,
+training targets, or tuning signals.
 
 ## Interpretation limits
 
-- Per-request binary log-loss is a supervised proxy for the quality predictor;
-  it is not per-request AUC.
+- Per-request acceptable-vs-Full classification is a supervised proxy; it is
+  not a per-request AUC prediction. Global AUC is optimized only during
+  validation policy calibration.
 - Final recommendation quality is reported using global test ROC-AUC.
 - Interaction reduction is a history-budget measurement. It is not evidence
   of measured serving latency, cloud spending, energy savings, or serverless
