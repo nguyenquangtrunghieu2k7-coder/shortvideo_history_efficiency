@@ -389,6 +389,8 @@ def main():
         "evaluation_id": test.evaluation_ids,
         "user_id": test.user_ids,
         "selected_K": [str(K_VALUES[i]) for i in test_actions],
+        "selected_policy": selected["policy"],
+        "deployment_mode": selected["deployment_mode"],
         "available_history_length": [len(h) for h in test.history_ids],
         "selected_history_length": [
             0 if K_VALUES[i] == 0 else
@@ -415,7 +417,7 @@ def main():
         "cost_normalization_scale": cost_scale,
         "max_auc_drop": args.max_auc_drop,
         "target_definition": "per-request AUC-contribution uplift vs Full reference scores; proxy target only",
-        "policy_constraint": "minimum history interactions among validation policies whose paired-bootstrap 90% lower AUC-difference bound >= -max_auc_drop",
+        "policy_constraint": "minimum history interactions among candidates passing the validation point-AUC screen, followed by one independent certification 90% CI gate; Full fallback on certification failure",
     }, model_path)
 
     print("\n=== HELD-OUT TEST RESULTS ===")
