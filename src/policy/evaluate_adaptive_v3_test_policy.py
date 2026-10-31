@@ -1,8 +1,9 @@
-"""Evaluate a pre-selected V3 lambda policy once on the held-out test set.
+"""Re-evaluate the test artifact using the exact V3 policy frozen by training.
 
-This script reuses the saved V3 predictor and per-K test predictions. It does
-not retrain the recommender or selector and does not change lambda based on test
-results. The default non-inferiority margin is delta=0.03.
+This script does not accept a lambda override and never chooses a new policy.
+It loads selected_validation_policy from the model bundle, verifies that the
+policy passed the certification/fallback protocol, and applies the shared
+policy implementation from adaptive_v3_policy.py.
 """
 from __future__ import annotations
 
@@ -20,17 +21,17 @@ sys.path.insert(0, str(ROOT / "src" / "policy"))
 
 from adaptive_v3_policy import (  # noqa: E402
     K_VALUES,
-    predict_auc_uplift,
+    apply_selected_policy_from_lengths,
+    interaction_matrix_from_lengths,
+    selected_scores,
     stratified_paired_auc_difference_ci,
 )
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="One-shot held-out test evaluation for a fixed V3 lambda."
+        description="Evaluate the certified, frozen Adaptive History Selector V3 policy."
     )
-    parser.add_argument("--lambda-penalty", type=float, default=0.006235507341)
-    parser.add_argument("--max-auc-drop", type=float, default=0.03)
     parser.add_argument("--bootstrap-repeats", type=int, default=5000)
     parser.add_argument("--bootstrap-seed", type=int, default=2026)
     parser.add_argument(
@@ -44,11 +45,6 @@ def parse_args():
         default=ROOT / "data" / "processed" / "phase9_v3" / "adaptive_v3_test_decisions.parquet",
     )
     parser.add_argument(
-        "--frontier",
-        type=Path,
-        default=ROOT / "data" / "processed" / "phase9_v3" / "adaptive_v3_validation_policy_frontier.csv",
-    )
-    parser.add_argument(
         "--output-dir",
         type=Path,
         default=ROOT / "data" / "processed" / "phase9_v3",
@@ -58,35 +54,35 @@ def parse_args():
 
 def main():
     args = parse_args()
-    if args.max_auc_drop <= 0:
-        raise ValueError("--max-auc-drop must be positive.")
-    for path in (args.model, args.test_decisions, args.frontier):
+    if args.bootstrap_repeats < 20:
+        raise ValueError("--bootstrap-repeats must be at least 20.")
+    for path in (args.model, args.test_decisions):
         if not path.exists():
             raise FileNotFoundError(f"Required artifact not found: {path}")
 
-    policy_name = f"V3-lambda-{args.lambda_penalty:.8g}"
-    frontier = pd.read_csv(args.frontier)
-    matching = frontier.loc[frontier["policy"].eq(policy_name)]
-    if len(matching) != 1:
-        raise ValueError(
-            f"Expected exactly one validation-frontier row for {policy_name}; "
-            f"found {len(matching)}. Check --lambda-penalty and the frontier file."
-        )
-    validation_row = matching.iloc[0]
-    validation_ci_low = float(validation_row["auc_delta_ci_low_90"])
-    validation_delta = float(validation_row["auc_delta_vs_full"])
-    if validation_delta < -args.max_auc_drop:
-        raise ValueError(
-            f"{policy_name} violates the delta={args.max_auc_drop:.3f} "
-            f"point-estimate constraint on tuning (delta={validation_delta:.6f})."
-        )
-    if validation_ci_low < -args.max_auc_drop:
-        raise ValueError(
-            f"{policy_name} does not meet the delta={args.max_auc_drop:.3f} "
-            f"tuning CI screen (lower bound={validation_ci_low:.6f})."
-        )
-
     bundle = joblib.load(args.model)
+    if bundle.get("policy_frozen_after_certification") is not True:
+        raise ValueError(
+            "Model bundle does not declare a frozen post-certification policy. "
+            "Run the updated train_adaptive_selector_v3.py first."
+        )
+    selected = bundle.get("selected_validation_policy")
+    if not isinstance(selected, dict):
+        raise ValueError("Model bundle is missing selected_validation_policy.")
+    if "candidate_certification_passed" not in selected:
+        raise ValueError("Frozen policy is missing its certification outcome.")
+    if not selected["candidate_certification_passed"]:
+        if (
+            selected.get("deployment_mode") != "fixed_k_fallback"
+            or str(selected.get("fixed_K")) != "Full"
+            or not selected.get("certification_fallback_to_full")
+        ):
+            raise ValueError(
+                "Certification failed but the frozen policy is not a Full fallback."
+            )
+    elif selected.get("certification_fallback_to_full"):
+        raise ValueError("Policy metadata contradicts the certification outcome.")
+
     model = bundle["model"]
     feature_names = list(bundle["feature_names"])
     cost_scale = float(bundle["cost_normalization_scale"])
@@ -102,7 +98,7 @@ def main():
     y = frame["long_view"].to_numpy(dtype=np.int8)
     lengths = frame["available_history_length"].to_numpy(dtype=np.int64)
     if set(np.unique(y)) != {0, 1}:
-        raise ValueError("Held-out test labels must contain both classes.")
+        raise ValueError("Test labels must contain both binary classes.")
     if np.any(lengths < 0):
         raise ValueError("History lengths cannot be negative.")
 
@@ -110,30 +106,22 @@ def main():
         k: frame[f"probability_K{k}"].to_numpy(dtype=np.float64)
         for k in K_VALUES
     }
-    uplift = predict_auc_uplift(model, frame, feature_names)
-    # Equivalent to choose_actions(), without materializing Python history lists.
-    costs = np.column_stack([
-        np.zeros_like(lengths),
-        *[np.minimum(lengths, int(k)) for k in K_VALUES[1:-1]],
-        lengths,
-    ]).astype(np.float64) / max(cost_scale, 1.0)
-    utility = np.column_stack([uplift, np.zeros(len(frame))]) - args.lambda_penalty * costs
-    actions = np.argmax(utility, axis=1)
-    action_labels = np.asarray([str(k) for k in K_VALUES], dtype=object)
-    selected_k = action_labels[actions]
-    score_matrix = np.column_stack([predictions[k] for k in K_VALUES])
-    policy_scores = score_matrix[np.arange(len(y)), actions]
+    actions = apply_selected_policy_from_lengths(
+        selected, model, frame, lengths, cost_scale, feature_names
+    )
+    policy_scores = selected_scores(predictions, actions)
     full_scores = predictions["Full"]
-
     policy_auc = float(roc_auc_score(y, policy_scores))
     full_auc = float(roc_auc_score(y, full_scores))
-    policy_logloss = float(log_loss(y, np.clip(policy_scores, 1e-7, 1 - 1e-7), labels=[0, 1]))
-    full_logloss = float(log_loss(y, np.clip(full_scores, 1e-7, 1 - 1e-7), labels=[0, 1]))
-    used = np.where(
-        actions == 0, 0,
-        np.where(actions == len(K_VALUES) - 1, lengths,
-                 np.minimum(lengths, np.asarray([0, 1, 5, 10, 20, 50, 100, 0])[actions]))
+    policy_logloss = float(
+        log_loss(y, np.clip(policy_scores, 1e-7, 1 - 1e-7), labels=[0, 1])
     )
+    full_logloss = float(
+        log_loss(y, np.clip(full_scores, 1e-7, 1 - 1e-7), labels=[0, 1])
+    )
+
+    interaction_counts = interaction_matrix_from_lengths(lengths)
+    used = interaction_counts[np.arange(len(y)), actions]
     full_total = int(lengths.sum())
     used_total = int(used.sum())
     ci_low, ci_high = stratified_paired_auc_difference_ci(
@@ -143,10 +131,16 @@ def main():
     )
 
     result = {
-        "policy": policy_name,
-        "delta_constraint": args.max_auc_drop,
-        "validation_tuning_auc_delta": validation_delta,
-        "validation_tuning_ci_low_90": validation_ci_low,
+        "policy": selected["policy"],
+        "deployment_mode": selected["deployment_mode"],
+        "candidate_policy_before_certification": selected.get(
+            "candidate_policy_before_certification"
+        ),
+        "candidate_certification_passed": selected["candidate_certification_passed"],
+        "certification_fallback_to_full": selected.get(
+            "certification_fallback_to_full", False
+        ),
+        "delta_constraint": bundle.get("max_auc_drop"),
         "test_auc": policy_auc,
         "test_full_auc": full_auc,
         "test_auc_delta_vs_full": policy_auc - full_auc,
@@ -160,29 +154,34 @@ def main():
         "test_history_reduction_vs_full": 1.0 - used_total / max(full_total, 1),
         "bootstrap_repeats": args.bootstrap_repeats,
         "bootstrap_seed": args.bootstrap_seed,
-        "note": "One-shot test evaluation; do not tune lambda using these results.",
+        "note": (
+            "Re-evaluation of the frozen post-certification policy; "
+            "no lambda or policy selection is performed in this script."
+        ),
     }
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    decisions = frame[["evaluation_id", "user_id", "long_view", "available_history_length"]].copy()
-    decisions["selected_K"] = selected_k
+    decisions = frame[
+        ["evaluation_id", "user_id", "long_view", "available_history_length"]
+    ].copy()
+    decisions["selected_K"] = [str(K_VALUES[i]) for i in actions]
     decisions["selected_probability"] = policy_scores
     decisions["full_probability"] = full_scores
-    decisions_path = args.output_dir / "adaptive_v3_lambda_006235_test_decisions.parquet"
-    metrics_path = args.output_dir / "adaptive_v3_lambda_006235_test_metrics.csv"
+    decisions_path = args.output_dir / "adaptive_v3_frozen_policy_test_decisions.parquet"
+    metrics_path = args.output_dir / "adaptive_v3_frozen_policy_test_metrics.csv"
     decisions.to_parquet(decisions_path, index=False)
     pd.DataFrame([result]).to_csv(metrics_path, index=False)
 
-    print("=== FIXED POLICY / HELD-OUT TEST ===")
+    print("=== FROZEN V3 POLICY / HELD-OUT TEST ===")
     for key, value in result.items():
         print(f"{key}: {value}")
-    print("\nSelected K distribution:")
-    print(pd.Series(selected_k).value_counts().sort_index().to_string())
-    print(f"\nSaved decisions: {decisions_path}")
+    print("\\nSelected K distribution:")
+    print(decisions["selected_K"].value_counts().sort_index().to_string())
+    print(f"\\nSaved decisions: {decisions_path}")
     print(f"Saved metrics:   {metrics_path}")
     print(
-        "\nInterpretation: the test result is a final evaluation, not a new "
-        "calibration step. Do not change lambda after inspecting it."
+        "\\nThis script only re-applies the policy frozen by training. "
+        "It cannot override lambda or bypass certification."
     )
 
 
