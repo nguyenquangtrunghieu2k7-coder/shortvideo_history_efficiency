@@ -68,14 +68,14 @@ The candidate passes only if the 90% paired-bootstrap lower confidence bound for
 After Phase 8 checkpoints and the frozen video vocabulary are available:
 
 \`\`\`bash
-python src/policy/train_adaptive_selector_v3.py
+python src/policy/train_adaptive_selector_v3.py --max-auc-drop 0.03
 \`\`\`
 
 Optional controls:
 
 \`\`\`bash
 python src/policy/train_adaptive_selector_v3.py \\
-  --max-auc-drop 0.01 \\
+  --max-auc-drop 0.03 \\
   --lambda-steps 41 \\
   --bootstrap-repeats 200
 \`\`\`
@@ -96,3 +96,20 @@ For a faster smoke run, use fewer trees, fewer lambda steps, and at least 20 boo
 - History interactions are a computational-work proxy. They are not measured latency, cloud spending, energy, or Bloom-FaaS cost.
 - The current experiment runs frozen K-specific models to generate counterfactual scores offline. Bounded feature extraction reduces selector-side inspection to at most 100 recent IDs, but the current offline data loader still materializes histories; it does not yet demonstrate online serving or actual Bloom-FaaS integration.
 - A V3 outcome that falls back to Full is a valid negative result: it means this experiment did not certify a cheaper policy under the chosen AUC constraint. Do not relax the constraint after inspecting test results.
+
+
+## One-shot evaluation of the selected \\(\\delta=0.03\\) policy
+
+The current selected tuning candidate is \\(\\lambda=0.006235507341\\). Its 5,000-repeat tuning bootstrap lower bound is approximately \\(-0.023824\\), which satisfies the project margin \\(-0.03\\). The frontier CSV may still show `ci_feasible_on_tuning=False` because it was generated in a run configured with `--max-auc-drop 0.01`; interpret the numeric CI bound against the intended \\(\\delta=0.03\\) threshold instead.
+
+After the model bundle, test-decision parquet, and validation frontier from that run are present locally, evaluate this fixed policy once on the held-out test set without retraining:
+
+\`\`\`bash
+python src/policy/evaluate_adaptive_v3_test_policy.py \\
+  --lambda-penalty 0.006235507341 \\
+  --max-auc-drop 0.03 \\
+  --bootstrap-repeats 5000 \\
+  --bootstrap-seed 2026
+\`\`\`
+
+This reuses the saved model and all per-K test predictions. It does not reselect \\(\\lambda\\) from test results. Treat the output as the final test evaluation; do not adjust the policy after inspecting it. The earlier certification split was already inspected for a different candidate, so it must not be described as an untouched independent confirmation for this policy.
