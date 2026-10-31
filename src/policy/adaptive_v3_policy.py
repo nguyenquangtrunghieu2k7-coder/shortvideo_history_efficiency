@@ -184,8 +184,11 @@ def predict_auc_uplift(model, features, feature_names):
     return values
 
 
-def interaction_matrix(histories, k_values=K_VALUES):
-    lengths = np.asarray([len(h) for h in histories], dtype=np.int64)
+def interaction_matrix_from_lengths(history_lengths, k_values=K_VALUES):
+    """Return per-request interaction counts for each action in K_VALUES order."""
+    lengths = np.asarray(history_lengths, dtype=np.int64)
+    if lengths.ndim != 1 or np.any(lengths < 0):
+        raise ValueError("History lengths must be a non-negative 1-D array.")
     columns = []
     for k in k_values:
         if k == 0:
@@ -198,15 +201,31 @@ def interaction_matrix(histories, k_values=K_VALUES):
     return np.column_stack(columns)
 
 
-def choose_actions(uplift_predictions, histories, penalty, cost_scale):
-    """Choose K maximizing predicted AUC uplift minus normalized history cost."""
+def interaction_matrix(histories, k_values=K_VALUES):
+    return interaction_matrix_from_lengths([len(h) for h in histories], k_values)
+
+
+def choose_actions_from_lengths(uplift_predictions, history_lengths, penalty, cost_scale):
+    """Choose K using the shared uplift-minus-normalized-cost rule."""
     uplift = np.column_stack([
         np.asarray(uplift_predictions, dtype=float),
         np.zeros(len(uplift_predictions), dtype=float),  # Full has zero uplift.
     ])
-    costs = interaction_matrix(histories).astype(np.float64) / max(float(cost_scale), 1.0)
+    costs = interaction_matrix_from_lengths(history_lengths).astype(np.float64)
+    costs /= max(float(cost_scale), 1.0)
+    if uplift.shape != costs.shape:
+        raise ValueError(
+            f"Uplift/cost action matrices must align; got {uplift.shape} and {costs.shape}."
+        )
     utility = uplift - float(penalty) * costs
     return np.argmax(utility, axis=1).astype(np.int64)
+
+
+def choose_actions(uplift_predictions, histories, penalty, cost_scale):
+    """History-list wrapper around the canonical length-based action selector."""
+    return choose_actions_from_lengths(
+        uplift_predictions, [len(h) for h in histories], penalty, cost_scale
+    )
 
 
 def actions_for_fixed_k(n_rows, k):
@@ -343,11 +362,55 @@ def calibrate_policy(y_true, predictions, histories, uplift_predictions,
     return selected, table, mean_full_length, full_auc
 
 
-def apply_selected_policy(selected, model, features, histories, cost_scale, feature_names):
-    if selected["deployment_mode"] == "fixed_k_fallback":
-        return actions_for_fixed_k(len(features), selected["fixed_K"] if isinstance(selected["fixed_K"], (int, float)) else _parse_k(selected["fixed_K"]))
+def apply_heuristic_policy(policy_name, features, history_lengths):
+    """Apply a validation-selected transparent heuristic without retuning it."""
+    parts = policy_name.split("-")
+    lengths = np.asarray(history_lengths, dtype=np.int64)
+    if parts[1] == "length":
+        cutoff, low_k, high_k = int(parts[2]), int(parts[3]), parts[4]
+        values = lengths
+    elif parts[1] == "diversity":
+        cutoff, low_k, high_k = float(parts[2]), int(parts[3]), parts[4]
+        if "recent_unique_ratio_100" not in features:
+            raise ValueError("The selected diversity heuristic requires recent_unique_ratio_100.")
+        values = features["recent_unique_ratio_100"].to_numpy(dtype=float)
+    else:
+        raise ValueError(f"Unknown heuristic policy: {policy_name}")
+
+    high_k = _parse_k(high_k)
+    return np.where(
+        values <= cutoff,
+        K_VALUES.index(low_k),
+        K_VALUES.index(high_k),
+    ).astype(np.int64)
+
+
+def apply_selected_policy_from_lengths(
+    selected, model, features, history_lengths, cost_scale, feature_names
+):
+    """Apply exactly the policy frozen after validation certification."""
+    mode = selected.get("deployment_mode")
+    if mode == "fixed_k_fallback":
+        return actions_for_fixed_k(len(features), _parse_k(selected["fixed_K"]))
+    if mode == "heuristic":
+        return apply_heuristic_policy(
+            selected["heuristic_name"], features, history_lengths
+        )
+    if mode != "learned_adaptive":
+        raise ValueError(f"Unknown or unfrozen V3 deployment mode: {mode!r}")
+
     uplift = predict_auc_uplift(model, features, feature_names)
-    return choose_actions(uplift, histories, float(selected["penalty"]), cost_scale)
+    return choose_actions_from_lengths(
+        uplift, history_lengths, float(selected["penalty"]), cost_scale
+    )
+
+
+def apply_selected_policy(selected, model, features, histories, cost_scale, feature_names):
+    """History-list wrapper around the canonical frozen-policy application."""
+    return apply_selected_policy_from_lengths(
+        selected, model, features, [len(h) for h in histories],
+        cost_scale, feature_names,
+    )
 
 
 def _parse_k(value):
