@@ -31,8 +31,11 @@ V1 remains unchanged and is the direct-classification baseline.
   focuses on the relative quality change caused by truncating history rather
   than predicting each model's noisy absolute loss independently.
 - Targets are winsorized at the 1st/99th percentiles using predictor-fit data
-  only. ExtraTrees and RandomForest are compared on an inner split of the
+  only. ExtraTrees, RandomForest, multi-output HistGradientBoosting, and a
+  mean-only DummyRegressor baseline are compared on an inner split of the
   predictor-fit partition; the lower-MAE model is refit on that full partition.
+  Including the mean baseline prevents selecting a complex model that does not
+  beat a no-feature predictor.
 - Validation is split into predictor-fit and policy-calibration subsets.
   The scalar `lambda` is selected on the second subset by minimizing
   `calibration_logloss + budget_weight * normalized_mean_history_cost`.
