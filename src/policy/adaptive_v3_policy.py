@@ -281,12 +281,12 @@ def stratified_paired_auc_difference_ci(y_true, policy_scores, full_scores,
 
 def calibrate_policy(y_true, predictions, histories, uplift_predictions,
                      max_auc_drop, lambda_steps):
-    """Select the highest-quality candidate that passes tuning non-inferiority.
+    """Select minimum history cost among candidates passing the tuning AUC gate.
 
-    The point-estimate AUC constraint is the only selection gate. Bootstrap
-    intervals are descriptive diagnostics, not a second gate. Among eligible
-    candidates, maximize global tuning AUC; use lower history cost only as a
-    tie-breaker. The held-out test is evaluated once afterward.
+    The point-estimate AUC constraint is the only selection gate. Among
+    eligible candidates, minimize total history interactions; use higher
+    global tuning AUC only to break equal-cost ties. The held-out test is
+    evaluated once afterward.
     """
     y = np.asarray(y_true, dtype=np.int8)
     full_scores = np.asarray(predictions["Full"], dtype=float)
