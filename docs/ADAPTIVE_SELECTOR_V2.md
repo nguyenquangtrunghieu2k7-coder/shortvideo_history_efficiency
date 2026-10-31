@@ -89,7 +89,7 @@ The test decisions Parquet additionally stores:
 - a post-hoc oracle-best K and its actual loss;
 - per-request actual-loss regret relative to that oracle.
 
-The oracle fields are strictly post-hoc diagnostics. They use test labels after the policy has already been selected and must never be used as selector inputs, training targets, or tuning signals. The quality diagnostics CSV reports MAE, RMSE, and R-squared between predicted and actual per-request log-loss, separately for validation calibration and held-out test.
+The oracle fields are strictly post-hoc diagnostics. They use test labels after the policy has already been selected and must never be used as selector inputs, training targets, or tuning signals. The quality diagnostics CSV reports MAE, RMSE, R-squared, and sign accuracy for predicted versus actual per-request loss deltas relative to Full, separately for validation calibration and held-out test. The model-selection CSV records the inner validation comparison between ExtraTrees, RandomForest, HistGradientBoosting, and the mean-only baseline. Feature importance is measured by permutation on the policy-calibration subset.
 
 ## Interpretation limits
 
