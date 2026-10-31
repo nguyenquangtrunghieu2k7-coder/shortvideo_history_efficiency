@@ -246,12 +246,12 @@ def main():
         "feature_names": FEATURE_NAMES,
         "k_values": K_VALUES,
         "selected_validation_policy": selected,
-        "policy_protocol": "select_highest_validation_auc_among_candidates_within_point_auc_drop_tolerance; evaluate_once_on_held_out_test",
+        "policy_protocol": "select_minimum_history_cost_among_candidates_within_validation_auc_drop_tolerance; evaluate_once_on_held_out_test",
         "policy_frozen_after_validation_tuning": True,
         "cost_normalization_scale": cost_scale,
         "max_auc_drop": args.max_auc_drop,
         "target_definition": "per-request AUC-contribution uplift vs Full reference scores; proxy target only",
-        "policy_constraint": "highest tuning AUC among candidates whose point-estimate AUC is within max_auc_drop of Full; Full remains an eligible fallback",
+        "policy_constraint": "minimum history cost among candidates whose point-estimate AUC is within max_auc_drop of Full; higher AUC breaks cost ties; Full remains an eligible fallback",
     }, model_path)
 
     print("\n=== HELD-OUT TEST RESULTS ===")
