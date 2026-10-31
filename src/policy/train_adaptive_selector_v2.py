@@ -6,7 +6,7 @@ Protocol
 2. The supervised target is each truncated K model's per-request log-loss
    difference relative to Full (Full is the exact zero reference).
 3. Validation is split into predictor-fit and policy-calibration subsets;
-   ExtraTrees and RandomForest are compared on an inner fit-only split.
+   tree ensembles and a mean-only baseline are compared on an inner fit-only split.
 4. A scalar cost penalty is selected on the held-out calibration subset by
    minimizing calibration log-loss plus a configured normalized history cost.
 5. Test is used once for final evaluation.
@@ -178,35 +178,51 @@ def fit_quality_predictor(features, loss_matrix, labels, args):
             n_estimators=args.trees, min_samples_leaf=args.min_samples_leaf,
             max_features=0.9, random_state=args.random_state, n_jobs=-1,
         ),
-        "HistGradientBoosting": MultiOutputRegressor(
+        "HistGradientBoosting_MAE": MultiOutputRegressor(
             HistGradientBoostingRegressor(
-                max_iter=200, learning_rate=0.05, max_leaf_nodes=15,
-                min_samples_leaf=args.min_samples_leaf, l2_regularization=1.0,
-                random_state=args.random_state,
+                loss="absolute_error", max_iter=200, learning_rate=0.05,
+                max_leaf_nodes=15, min_samples_leaf=args.min_samples_leaf,
+                l2_regularization=1.0, random_state=args.random_state,
             ),
             n_jobs=-1,
         ),
         "MeanBaseline": DummyRegressor(strategy="mean"),
     }
+    fit_targets = targets[fit_ids]
+    lower_fit, upper_fit = target_clip_bounds(fit_targets)
+    clipped_fit = np.clip(fit_targets, lower_fit, upper_fit)
+    clipped_select = np.clip(targets[select_ids], lower_fit, upper_fit)
+    # Normalize each K target by its fit-only IQR so a high-variance K
+    # cannot dominate model selection merely because of its numeric scale.
+    target_scale = np.quantile(clipped_fit, 0.75, axis=0) - np.quantile(
+        clipped_fit, 0.25, axis=0
+    )
+    target_scale = np.where(target_scale > 1e-8, target_scale, 1.0)
+
     rows = []
     for name, model in candidates.items():
-        lo, hi = target_clip_bounds(targets[fit_ids])
-        model.fit(features.iloc[fit_ids][FEATURE_NAMES],
-                  np.clip(targets[fit_ids], lo, hi))
-        pred = model.predict(features.iloc[select_ids][FEATURE_NAMES])
+        model.fit(features.iloc[fit_ids][FEATURE_NAMES], clipped_fit)
+        pred = np.asarray(
+            model.predict(features.iloc[select_ids][FEATURE_NAMES]),
+            dtype=np.float64,
+        )
+        pred = np.clip(pred, lower_fit, upper_fit)
+        per_k_mae = np.mean(np.abs(clipped_select - pred), axis=0)
         rows.append({
             "model": name,
-            "selection_mae": float(mean_absolute_error(targets[select_ids], pred)),
-            "selection_rmse": float(np.sqrt(mean_squared_error(targets[select_ids], pred))),
+            "selection_normalized_mae": float(np.mean(per_k_mae / target_scale)),
+            "selection_mae_clipped": float(mean_absolute_error(clipped_select, pred)),
+            "selection_mae_raw": float(mean_absolute_error(targets[select_ids], pred)),
+            "selection_rmse_clipped": float(np.sqrt(mean_squared_error(clipped_select, pred))),
         })
     selection = pd.DataFrame(rows).sort_values(
-        ["selection_mae", "selection_rmse"]
+        ["selection_normalized_mae", "selection_mae_clipped"]
     ).reset_index(drop=True)
     name = str(selection.iloc[0]["model"])
     model = candidates[name]
-    lo, hi = target_clip_bounds(targets)
-    model.fit(features[FEATURE_NAMES], np.clip(targets, lo, hi))
-    return model, lo, hi, name, selection
+    lower, upper = target_clip_bounds(targets)
+    model.fit(features[FEATURE_NAMES], np.clip(targets, lower, upper))
+    return model, lower, upper, name, selection
 
 
 def predict_relative_losses(model, features, lower, upper):
@@ -415,6 +431,12 @@ def main():
     )
     print(f"Selected quality predictor: {predictor_name}")
     print(model_selection_table.to_string(index=False))
+    if predictor_name == "MeanBaseline":
+        print(
+            "WARNING: validation features did not beat the mean-only baseline; "
+            "the current selector has no demonstrated request-specific "
+            "quality-prediction skill."
+        )
     calibration_loss_predictions = predict_relative_losses(
         predictor, val_features.iloc[calibration_indices], target_lower, target_upper
     )
@@ -470,6 +492,7 @@ def main():
     adaptive_metrics["selected_lambda"] = penalty
     adaptive_metrics["calibration_status"] = calibration_status
     adaptive_metrics["quality_predictor"] = predictor_name
+    adaptive_metrics["quality_predictor_uses_features"] = predictor_name != "MeanBaseline"
     adaptive_metrics["budget_weight"] = args.budget_weight
 
     # Oracle is strictly post-hoc: it uses test labels only for diagnostics and
@@ -579,6 +602,7 @@ def main():
     joblib.dump({
         "predictor": predictor,
         "predictor_name": predictor_name,
+        "predictor_uses_features": predictor_name != "MeanBaseline",
         "feature_names": FEATURE_NAMES,
         "k_values": K_VALUES,
         "lambda": penalty,
