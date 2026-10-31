@@ -327,10 +327,11 @@ def calibrate_policy(y_true, predictions, histories, uplift_predictions,
         # Full must pass: its AUC delta and paired difference are exactly zero.
         raise RuntimeError("No policy passed tuning constraints, including Full.")
 
-    # Quality first. History cost is only a tie-breaker, not the objective.
+    # Minimize history interactions among all candidates that satisfy
+    # the validation AUC constraint. Prefer higher AUC only when costs tie.
     eligible = eligible.sort_values(
-        ["auc", "history_cost_ratio"],
-        ascending=[False, True],
+        ["history_cost_ratio", "auc"],
+        ascending=[True, False],
     ).reset_index(drop=True)
     selected = eligible.iloc[0].to_dict()
     selected["deployment_mode"] = (
