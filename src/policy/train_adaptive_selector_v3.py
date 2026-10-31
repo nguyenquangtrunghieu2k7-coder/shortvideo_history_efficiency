@@ -336,7 +336,6 @@ def main():
         fixed = "Full" if str(fixed) == "Full" else int(fixed)
         test_actions = np.full(len(test_y), K_VALUES.index(fixed), dtype=int)
     else:
-        test_uplift = predict_auc_uplift(model, test_features, FEATURE_NAMES)
         test_actions = apply_selected_policy(
             selected, model, test_features, test.history_ids,
             cost_scale, FEATURE_NAMES,
@@ -355,6 +354,9 @@ def main():
         "selected_policy": selected["policy"],
         "max_auc_drop_validation": args.max_auc_drop,
         "quality_predictor": model_name,
+        "independent_certification_passed": certification_passed,
+        "certification_auc_delta_ci_low_90": cert_low,
+        "certification_auc_delta_ci_high_90": cert_high,
     })
     result_rows.append(adaptive_metrics)
 
