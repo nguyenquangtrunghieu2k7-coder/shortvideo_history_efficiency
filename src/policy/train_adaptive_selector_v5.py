@@ -243,11 +243,14 @@ def main():
         "validation_full_auc": tuning_full_auc,
         "validation_auc_drop_tolerance": args.max_auc_drop,
         "selection_objective": selected["selection_objective"],
-        "validation_quality_retention": selected["quality_retention"],
         "validation_history_saving": selected["history_saving"],
-        "validation_balanced_utility": selected["balanced_utility"],
         "validation_selected_policy_auc": selected["auc"],
         "validation_selected_policy_history_cost_ratio": selected["history_cost_ratio"],
+        "validation_knee_distance": selected.get("signed_knee_distance"),
+        "validation_selection_status": selected.get("selection_status"),
+        "validation_fallback_reason": selected.get("fallback_reason"),
+        "validation_pareto_point_count": selected.get("validation_pareto_point_count"),
+        "validation_duplicate_coordinate_count": selected.get("validation_duplicate_coordinate_count"),
     })
     result_rows.append(adaptive_metrics)
 
