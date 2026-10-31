@@ -432,7 +432,7 @@ def main():
         "max_auc_drop": args.max_auc_drop,
         "calibration_status": calibration_status,
         "calibration_full_auc": calibration_full_auc,
-        "cost_definition": "selected history interactions / available history length",
+        "cost_definition": "selected interactions normalized by fixed mean Full-history length from validation calibration",
         "target_definition": "per-request binary log-loss for each frozen K model",
     }, model_path)
 
