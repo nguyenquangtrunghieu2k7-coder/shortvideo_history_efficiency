@@ -241,41 +241,82 @@ def main():
         validation, vocab_size, device, args.batch_size
     )
 
-    # Three disjoint validation roles: predictor development, model selection
-    # is nested inside development; policy calibration is never used to fit
-    # request-level uplift predictions.
+    # Three disjoint validation roles: development, policy tuning, and
+    # independent certification. This avoids claiming non-inferiority on the
+    # same rows used to choose among many candidate policies.
     from sklearn.model_selection import train_test_split
-    fit_idx, calibration_idx = train_test_split(
-        np.arange(len(val_y)), test_size=0.30,
+    development_idx, remainder_idx = train_test_split(
+        np.arange(len(val_y)), test_size=0.50,
         random_state=args.random_state, stratify=val_y,
     )
-    fit_features = val_features.iloc[fit_idx].reset_index(drop=True)
-    fit_predictions = {k: val_predictions[k][fit_idx] for k in K_VALUES}
-    fit_y = val_y[fit_idx]
+    tuning_idx, certification_idx = train_test_split(
+        remainder_idx, test_size=0.50,
+        random_state=args.random_state + 1, stratify=val_y[remainder_idx],
+    )
+    development_features = val_features.iloc[development_idx].reset_index(drop=True)
+    development_predictions = {k: val_predictions[k][development_idx] for k in K_VALUES}
+    development_y = val_y[development_idx]
 
-    print(f"\nDevelopment rows={len(fit_idx)}, policy calibration rows={len(calibration_idx)}")
+    print(
+        f"\nValidation roles: development={len(development_idx)}, "
+        f"policy-tuning={len(tuning_idx)}, independent-certification={len(certification_idx)}"
+    )
     model, model_name, model_table = fit_auc_uplift_predictor(
-        fit_features, fit_y, fit_predictions, args, FEATURE_NAMES
+        development_features, development_y, development_predictions, args, FEATURE_NAMES
     )
     print(f"Selected uplift model: {model_name}")
     print(model_table.to_string(index=False))
 
-    calibration_features = val_features.iloc[calibration_idx].reset_index(drop=True)
-    calibration_predictions = {k: val_predictions[k][calibration_idx] for k in K_VALUES}
-    calibration_histories = [validation.history_ids[i] for i in calibration_idx]
-    calibration_uplift = predict_auc_uplift(model, calibration_features, FEATURE_NAMES)
-
-    selected, policy_table, cost_scale, calibration_full_auc = calibrate_with_heuristics(
-        val_y[calibration_idx],
-        calibration_predictions,
-        calibration_histories,
-        calibration_uplift,
-        calibration_features,
-        args,
+    tuning_features = val_features.iloc[tuning_idx].reset_index(drop=True)
+    tuning_predictions = {k: val_predictions[k][tuning_idx] for k in K_VALUES}
+    tuning_histories = [validation.history_ids[i] for i in tuning_idx]
+    tuning_uplift = predict_auc_uplift(model, tuning_features, FEATURE_NAMES)
+    selected, policy_table, cost_scale, tuning_full_auc = calibrate_with_heuristics(
+        val_y[tuning_idx], tuning_predictions, tuning_histories,
+        tuning_uplift, tuning_features, args,
     )
-    print("\nSelected validation policy:")
+
+    # Certify the selected policy exactly once on untouched validation rows.
+    cert_features = val_features.iloc[certification_idx].reset_index(drop=True)
+    cert_predictions = {k: val_predictions[k][certification_idx] for k in K_VALUES}
+    cert_histories = [validation.history_ids[i] for i in certification_idx]
+    if selected["deployment_mode"] == "heuristic":
+        cert_actions = apply_heuristic(selected["heuristic_name"], cert_features, cert_histories)
+    elif selected["deployment_mode"] == "fixed_k_fallback":
+        fixed = selected["fixed_K"]
+        fixed = "Full" if str(fixed) == "Full" else int(fixed)
+        cert_actions = np.full(len(certification_idx), K_VALUES.index(fixed), dtype=int)
+    else:
+        cert_actions = apply_selected_policy(
+            selected, model, cert_features, cert_histories, cost_scale, FEATURE_NAMES
+        )
+    cert_metrics, cert_scores = evaluate_actions(
+        val_y[certification_idx], cert_predictions, cert_histories,
+        cert_actions, "V3-certification",
+    )
+    cert_low, cert_high = stratified_paired_auc_difference_ci(
+        val_y[certification_idx], cert_scores, cert_predictions["Full"],
+        repeats=args.bootstrap_repeats, random_state=args.bootstrap_seed + 5000,
+    )
+    certification_passed = bool(cert_low >= -args.max_auc_drop)
+    if not certification_passed:
+        selected = {
+            "policy": "Full-fallback-after-independent-certification",
+            "deployment_mode": "fixed_k_fallback",
+            "fixed_K": "Full",
+            "history_cost_ratio": 1.0,
+            "certification_fallback": True,
+        }
+    selected["independent_certification_passed"] = certification_passed
+    selected["certification_auc"] = cert_metrics["auc"]
+    selected["certification_auc_delta_ci_low_90"] = cert_low
+    selected["certification_auc_delta_ci_high_90"] = cert_high
+    print("\nSelected policy after independent certification:")
     print(json.dumps(selected, indent=2, default=str))
-    print(f"Validation Full AUC reference: {calibration_full_auc:.6f}")
+    print(
+        f"Certification 90% CI for AUC delta: [{cert_low:.6f}, {cert_high:.6f}] "
+        f"— {'PASS' if certification_passed else 'FAIL; Full fallback'}"
+    )
 
     print("\nLoading held-out test requests...")
     test = baseline.KuaiRandDataset("test", "Full", vocab_map)
