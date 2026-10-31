@@ -69,6 +69,16 @@ not a claim that per-request log-loss equals AUC.
 - `data/processed/phase9_v2/adaptive_v2_test_decisions.parquet`
 - `data/processed/phase9_v2/adaptive_v2_lambda_calibration.csv`
 - `data/processed/phase9_v2/adaptive_v2_feature_importance.csv`
+- `data/processed/phase9_v2/adaptive_v2_quality_diagnostics.csv`
+
+The test decisions Parquet additionally stores:
+- frozen-model probabilities for every K;
+- actual per-request binary log-loss for every K;
+- the selected policy's actual log-loss;
+- a post-hoc oracle-best K and its actual loss;
+- per-request actual-loss regret relative to that oracle.
+
+The oracle fields are strictly post-hoc diagnostics. They use test labels after the policy has already been selected and must never be used as selector inputs, training targets, or tuning signals. The quality diagnostics CSV reports MAE, RMSE, and R-squared between predicted and actual per-request log-loss, separately for validation calibration and held-out test.
 
 ## Interpretation limits
 
