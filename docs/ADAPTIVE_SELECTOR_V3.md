@@ -50,7 +50,7 @@ Compare:
 - transparent history-diversity heuristics;
 - learned per-request policies maximizing predicted AUC uplift minus a penalty on normalized interaction cost.
 
-For each candidate policy, calculate global validation AUC and a paired, class-stratified bootstrap confidence interval for AUC(policy)-AUC(Full). Among feasible policies, choose the lowest interaction cost. Keep a learned policy only if it beats the best feasible fixed-K policy; otherwise use the fixed-K fallback. Heuristics are also allowed to win if they reduce cost further.
+On the policy-tuning partition, calculate each candidate policy’s actual global AUC. Screen candidates by the point-estimate constraint AUC(policy) ≥ AUC(Full) − δ, then choose the lowest-cost candidate (learned policies must beat the best fixed-K policy; transparent heuristics may also win). Bootstrap intervals on this tuning partition are diagnostics, not the final gate. The selected candidate is evaluated once on the separate certification partition.
 
 ### 5. Independent certification
 
@@ -59,7 +59,7 @@ Validation is split into three disjoint roles:
 - policy tuning: choose the policy and cost penalty;
 - independent certification: evaluate the selected policy once.
 
-The policy passes only if the 90% paired-bootstrap lower confidence bound for AUC(policy)-AUC(Full) is at least \(-\delta\). If certification fails, V3 falls back to Full. This prevents a policy selected from many candidates from being certified on the same observations that selected it.
+The candidate passes only if the 90% paired-bootstrap lower confidence bound for AUC(policy)-AUC(Full) is at least \(-\delta\). If certification fails, V3 falls back to Full. The output records both the candidate policy and the final policy used for test, so a fallback cannot be mistaken for a successful adaptive policy. This prevents a policy selected from many candidates from being certified on the same observations that selected it.
 
 **Protocol caveat:** Phase 8 used the validation split for checkpoint selection/early stopping. The three V3 partitions are independent of one another for selector fitting, policy tuning, and certification, but they are not a completely untouched dataset relative to the already-selected Phase 8 checkpoints. The held-out test set remains the final untouched evaluation set. Its bootstrap interval is post-hoc inference and never changes the selected policy.
 
