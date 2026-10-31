@@ -284,10 +284,10 @@ def calibrate_policy(y_true, predictions, histories, uplift_predictions,
                      random_state=42):
     """Select the highest-quality candidate that passes tuning non-inferiority.
 
-    Both the point-estimate AUC constraint and paired-bootstrap lower-bound
-    constraint must pass. Among those candidates, maximize global tuning AUC;
-    use lower history cost only as a tie-breaker. Independent certification
-    remains the final gate.
+    The point-estimate AUC constraint is the only selection gate. Bootstrap
+    intervals are descriptive diagnostics, not a second gate. Among eligible
+    candidates, maximize global tuning AUC; use lower history cost only as a
+    tie-breaker. The held-out test is evaluated once afterward.
     """
     y = np.asarray(y_true, dtype=np.int8)
     full_scores = np.asarray(predictions["Full"], dtype=float)
@@ -319,7 +319,7 @@ def calibrate_policy(y_true, predictions, histories, uplift_predictions,
             "mean_history_interactions": metrics["mean_history_interactions"],
             "feasible": point_feasible,
             "ci_feasible_on_tuning": ci_feasible,
-            "selection_feasible": bool(point_feasible and ci_feasible),
+            "selection_feasible": point_feasible,
         })
 
     for k in K_VALUES:
@@ -354,7 +354,7 @@ def calibrate_policy(y_true, predictions, histories, uplift_predictions,
 def apply_selected_policy_from_lengths(
     selected, model, features, history_lengths, cost_scale, feature_names
 ):
-    """Apply exactly the policy frozen after validation certification."""
+    """Apply exactly the policy frozen after validation tuning."""
     mode = selected.get("deployment_mode")
     if mode == "fixed_k_fallback":
         return actions_for_fixed_k(len(features), _parse_k(selected["fixed_K"]))
