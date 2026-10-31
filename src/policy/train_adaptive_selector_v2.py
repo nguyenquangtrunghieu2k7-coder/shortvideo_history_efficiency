@@ -163,7 +163,14 @@ def metric_logloss(y_true, scores):
 
 
 def history_cost_fraction(histories):
+    """Normalize per-request interaction counts by mean Full-history length.
+
+    Summing this matrix over requests is proportional to total interactions,
+    unlike dividing each request by its own history length (which would give
+    short and long histories equal weight in the aggregate budget).
+    """
     lengths = np.asarray([len(history) for history in histories], dtype=np.float64)
+    scale = max(float(lengths.mean()) if len(lengths) else 0.0, 1.0)
     costs = []
     for k in K_VALUES:
         if k == 0:
@@ -172,9 +179,7 @@ def history_cost_fraction(histories):
             used = lengths.copy()
         else:
             used = np.minimum(lengths, int(k))
-        costs.append(np.divide(
-            used, lengths, out=np.zeros_like(used), where=lengths > 0
-        ))
+        costs.append(used / scale)
     return np.column_stack(costs)
 
 
