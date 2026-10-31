@@ -27,7 +27,7 @@ def test_pareto_frontier_removes_dominated_candidates():
     frontier, duplicate_count = _pareto_frontier(candidates)
     assert set(frontier["policy"]) == {"A", "C", "D"}
     assert duplicate_count == 0
-    assert _dominates(_row("A", 0.90, 0.10), _row("B", 0.85, 0.20)) is False
+    assert _dominates(_row("A", 0.90, 0.10), _row("B", 0.85, 0.05)) is True
 
 
 def test_duplicate_coordinates_are_collapsed_deterministically():
