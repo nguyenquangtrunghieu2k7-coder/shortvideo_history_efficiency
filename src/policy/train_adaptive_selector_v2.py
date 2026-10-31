@@ -1,18 +1,9 @@
-"""Adaptive History Selector V2: predict per-K quality, then allocate budget.
+"""Adaptive History Selector V2: predict acceptable history truncation per request.
 
-Protocol
---------
-1. Frozen K-specific recommenders produce validation/test probabilities.
-2. The supervised target is each truncated K model's per-request log-loss
-   difference relative to Full (Full is the exact zero reference).
-3. Validation is split into predictor-fit and policy-calibration subsets;
-   tree ensembles and a mean-only baseline are compared on an inner fit-only split.
-4. A scalar cost penalty is selected on the held-out calibration subset by
-   minimizing calibration log-loss plus a configured normalized history cost.
-5. Test is used once for final evaluation.
-
-This evaluates history-interaction budget, not end-to-end latency, money, energy,
-or Bloom-FaaS serving cost.
+The selector predicts whether each truncated K stays within a per-request
+log-loss regret tolerance relative to Full. It chooses the shortest acceptable
+history and calibrates the probability threshold against validation AUC and
+history-interaction budget. Full remains the safe fallback.
 """
 
 from __future__ import annotations
@@ -25,11 +16,11 @@ import joblib
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.dummy import DummyRegressor
-from sklearn.ensemble import ExtraTreesRegressor, HistGradientBoostingRegressor, RandomForestRegressor
+from sklearn.dummy import DummyClassifier
+from sklearn.ensemble import ExtraTreesClassifier, HistGradientBoostingClassifier, RandomForestClassifier
 from sklearn.inspection import permutation_importance
-from sklearn.multioutput import MultiOutputRegressor
-from sklearn.metrics import log_loss, mean_absolute_error, mean_squared_error, r2_score, roc_auc_score
+from sklearn.multioutput import MultiOutputClassifier
+from sklearn.metrics import average_precision_score, brier_score_loss, log_loss, roc_auc_score
 from sklearn.model_selection import train_test_split
 
 
@@ -56,15 +47,13 @@ def parse_args():
     parser.add_argument("--calibration-fraction", type=float, default=0.30)
     parser.add_argument(
         "--budget-weight", type=float, default=0.005,
-        help="Weight for normalized mean history cost in calibration utility.",
+        help="AUC-versus-history-budget trade-off used during threshold calibration.",
     )
     parser.add_argument(
-        "--lambda-max",
-        type=float,
-        default=0.50,
-        help="Upper bound of the history-cost penalty grid.",
+        "--max-logloss-regret", type=float, default=0.05,
+        help="Maximum per-request logloss increase over Full considered acceptable.",
     )
-    parser.add_argument("--lambda-steps", type=int, default=101)
+    parser.add_argument("--threshold-steps", type=int, default=101)
     return parser.parse_args()
 
 
@@ -148,125 +137,133 @@ def make_loss_matrix(y_true, predictions):
     ])
 
 
-def make_relative_loss_targets(loss_matrix):
-    """Per-request logloss deltas against Full; negative means better than Full."""
+def make_acceptance_targets(loss_matrix, max_logloss_regret):
+    """Binary target: does each truncated K stay within regret of Full?"""
     losses = np.asarray(loss_matrix, dtype=np.float64)
-    return losses[:, :-1] - losses[:, [-1]]
+    return (losses[:, :-1] - losses[:, [-1]] <= float(max_logloss_regret)).astype(np.int8)
 
 
-def target_clip_bounds(targets):
-    """Robust target bounds learned only from predictor-fit data."""
-    return (
-        np.quantile(targets, 0.01, axis=0),
-        np.quantile(targets, 0.99, axis=0),
-    )
+def _positive_class_probability(estimator, probabilities):
+    positive_index = np.flatnonzero(np.asarray(estimator.classes_) == 1)
+    if positive_index.size == 0:
+        return np.zeros(len(probabilities), dtype=np.float64)
+    return np.asarray(probabilities, dtype=np.float64)[:, int(positive_index[0])]
 
 
-def fit_quality_predictor(features, loss_matrix, labels, args):
-    """Select among tree ensembles and a mean baseline on an inner split."""
-    targets = make_relative_loss_targets(loss_matrix)
+def predict_acceptance_probabilities(model, features):
+    raw = model.predict_proba(features[FEATURE_NAMES])
+    expected = len(K_VALUES) - 1
+    if len(raw) != expected:
+        raise ValueError(f"Expected {expected} acceptance outputs; received {len(raw)}")
+    result = np.column_stack([
+        _positive_class_probability(estimator, probs)
+        for estimator, probs in zip(model.estimators_, raw)
+    ])
+    if result.shape != (len(features), expected):
+        raise ValueError(f"Invalid acceptance probability shape: {result.shape}")
+    return np.clip(result, 0.0, 1.0)
+
+
+def fit_quality_predictor(features, targets, labels, args):
+    """Select a multi-output classifier by macro average precision."""
     fit_ids, select_ids = train_test_split(
         np.arange(len(targets)), test_size=0.20,
         random_state=args.random_state + 1, stratify=np.asarray(labels),
     )
     candidates = {
-        "ExtraTrees": ExtraTreesRegressor(
-            n_estimators=args.trees, min_samples_leaf=args.min_samples_leaf,
-            max_features=0.9, random_state=args.random_state, n_jobs=-1,
+        "ExtraTreesClassifier": MultiOutputClassifier(
+            ExtraTreesClassifier(
+                n_estimators=args.trees, min_samples_leaf=args.min_samples_leaf,
+                max_features=0.9, class_weight="balanced",
+                random_state=args.random_state, n_jobs=-1,
+            ), n_jobs=-1,
         ),
-        "RandomForest": RandomForestRegressor(
-            n_estimators=args.trees, min_samples_leaf=args.min_samples_leaf,
-            max_features=0.9, random_state=args.random_state, n_jobs=-1,
+        "RandomForestClassifier": MultiOutputClassifier(
+            RandomForestClassifier(
+                n_estimators=args.trees, min_samples_leaf=args.min_samples_leaf,
+                max_features=0.9, class_weight="balanced_subsample",
+                random_state=args.random_state, n_jobs=-1,
+            ), n_jobs=-1,
         ),
-        "HistGradientBoosting_MAE": MultiOutputRegressor(
-            HistGradientBoostingRegressor(
-                loss="absolute_error", max_iter=200, learning_rate=0.05,
-                max_leaf_nodes=15, min_samples_leaf=args.min_samples_leaf,
-                l2_regularization=1.0, random_state=args.random_state,
-            ),
-            n_jobs=-1,
+        "HistGradientBoostingClassifier": MultiOutputClassifier(
+            HistGradientBoostingClassifier(
+                max_iter=200, learning_rate=0.05, max_leaf_nodes=15,
+                min_samples_leaf=args.min_samples_leaf, l2_regularization=1.0,
+                random_state=args.random_state,
+            ), n_jobs=-1,
         ),
-        "MeanBaseline": DummyRegressor(strategy="mean"),
+        "MeanBaseline": MultiOutputClassifier(DummyClassifier(strategy="prior"), n_jobs=-1),
     }
-    fit_targets = targets[fit_ids]
-    lower_fit, upper_fit = target_clip_bounds(fit_targets)
-    clipped_fit = np.clip(fit_targets, lower_fit, upper_fit)
-    clipped_select = np.clip(targets[select_ids], lower_fit, upper_fit)
-    # Normalize each K target by its fit-only IQR so a high-variance K
-    # cannot dominate model selection merely because of its numeric scale.
-    target_scale = np.quantile(clipped_fit, 0.75, axis=0) - np.quantile(
-        clipped_fit, 0.25, axis=0
-    )
-    target_scale = np.where(target_scale > 1e-8, target_scale, 1.0)
-
+    x_fit, x_select = features.iloc[fit_ids][FEATURE_NAMES], features.iloc[select_ids][FEATURE_NAMES]
+    y_fit, y_select = targets[fit_ids], targets[select_ids]
     rows = []
     for name, model in candidates.items():
-        model.fit(features.iloc[fit_ids][FEATURE_NAMES], clipped_fit)
-        pred = np.asarray(
-            model.predict(features.iloc[select_ids][FEATURE_NAMES]),
-            dtype=np.float64,
-        )
-        pred = np.clip(pred, lower_fit, upper_fit)
-        per_k_mae = np.mean(np.abs(clipped_select - pred), axis=0)
+        model.fit(x_fit, y_fit)
+        probabilities = predict_acceptance_probabilities(model, x_select)
+        aps, briers = [], []
+        for index in range(len(K_VALUES) - 1):
+            target = y_select[:, index]
+            aps.append(
+                float(average_precision_score(target, probabilities[:, index]))
+                if np.any(target == 1) else 0.0
+            )
+            briers.append(float(brier_score_loss(target, probabilities[:, index])))
         rows.append({
             "model": name,
-            "selection_normalized_mae": float(np.mean(per_k_mae / target_scale)),
-            "selection_mae_clipped": float(mean_absolute_error(clipped_select, pred)),
-            "selection_mae_raw": float(mean_absolute_error(targets[select_ids], pred)),
-            "selection_rmse_clipped": float(np.sqrt(mean_squared_error(clipped_select, pred))),
+            "selection_macro_average_precision": float(np.mean(aps)),
+            "selection_mean_brier": float(np.mean(briers)),
         })
     selection = pd.DataFrame(rows).sort_values(
-        ["selection_normalized_mae", "selection_mae_clipped"]
+        ["selection_macro_average_precision", "selection_mean_brier"],
+        ascending=[False, True],
     ).reset_index(drop=True)
     name = str(selection.iloc[0]["model"])
     model = candidates[name]
-    lower, upper = target_clip_bounds(targets)
-    model.fit(features[FEATURE_NAMES], np.clip(targets, lower, upper))
-    return model, lower, upper, name, selection
+    model.fit(features[FEATURE_NAMES], targets)
+    return model, name, selection
 
 
-def predict_relative_losses(model, features, lower, upper):
-    """Predict one relative-loss value per truncated K and append Full=0."""
-    pred = np.asarray(model.predict(features[FEATURE_NAMES]), dtype=np.float64)
-    if pred.ndim == 1:
-        pred = pred.reshape(-1, 1)
-
-    expected_outputs = len(K_VALUES) - 1
-    if pred.ndim != 2 or pred.shape[1] != expected_outputs:
-        raise ValueError(
-            f"Quality predictor must return {expected_outputs} outputs "
-            f"(one for each K except Full); received shape {pred.shape}."
-        )
-
-    lower = np.asarray(lower, dtype=np.float64).reshape(-1)
-    upper = np.asarray(upper, dtype=np.float64).reshape(-1)
-    if lower.size != expected_outputs or upper.size != expected_outputs:
-        raise ValueError(
-            f"Target clipping bounds must each contain {expected_outputs} values; "
-            f"received lower={lower.size}, upper={upper.size}."
-        )
-
-    pred = np.clip(pred, lower, upper)
-    return np.column_stack([pred, np.zeros(len(pred), dtype=np.float64)])
+def choose_k_by_acceptance(probabilities, threshold):
+    """Choose shortest K clearing threshold; Full is the safe fallback."""
+    probabilities = np.asarray(probabilities, dtype=np.float64)
+    expected = len(K_VALUES) - 1
+    if probabilities.ndim != 2 or probabilities.shape[1] != expected:
+        raise ValueError(f"Expected acceptance matrix with {expected} columns; got {probabilities.shape}")
+    accepted = probabilities >= float(threshold)
+    selected = np.full(len(probabilities), expected, dtype=np.int64)
+    any_accepted = accepted.any(axis=1)
+    selected[any_accepted] = np.argmax(accepted[any_accepted], axis=1)
+    return selected
 
 
-def quality_prediction_diagnostics(actual_loss_matrix, predicted_delta_matrix, split_name):
-    actual = make_relative_loss_targets(actual_loss_matrix)
-    predicted = np.asarray(predicted_delta_matrix, dtype=np.float64)[:, :-1]
+def acceptance_prediction_diagnostics(targets, probabilities, split_name):
     rows = []
     for index, k in enumerate(K_VALUES[:-1]):
-        y, p = actual[:, index], predicted[:, index]
+        target, probability = targets[:, index], probabilities[:, index]
         rows.append({
-            "split": split_name, "target": "logloss_K_minus_logloss_Full",
-            "K": str(k), "n_requests": len(y),
-            "actual_mean_delta_logloss": float(y.mean()),
-            "predicted_mean_delta_logloss": float(p.mean()),
-            "mae": float(mean_absolute_error(y, p)),
-            "rmse": float(np.sqrt(mean_squared_error(y, p))),
-            "r2": float(r2_score(y, p)) if len(y) > 1 else float("nan"),
-            "better_than_full_sign_accuracy": float(np.mean((y < 0) == (p < 0))),
+            "split": split_name, "K": str(k), "n_requests": len(target),
+            "actual_acceptance_rate": float(target.mean()),
+            "predicted_acceptance_rate": float(probability.mean()),
+            "average_precision": (
+                float(average_precision_score(target, probability))
+                if np.any(target == 1) else float("nan")
+            ),
+            "roc_auc": (
+                float(roc_auc_score(target, probability))
+                if len(np.unique(target)) > 1 else float("nan")
+            ),
+            "brier_score": float(brier_score_loss(target, probability)),
         })
     return rows
+
+
+def acceptance_macro_ap_scorer(estimator, x, y):
+    probabilities = predict_acceptance_probabilities(estimator, x)
+    values = [
+        average_precision_score(y[:, i], probabilities[:, i])
+        for i in range(y.shape[1]) if np.any(y[:, i] == 1)
+    ]
+    return float(np.mean(values)) if values else 0.0
 
 
 def metric_auc(y_true, scores):
@@ -351,44 +348,47 @@ def fixed_k_metrics(y_true, predictions, histories, k):
     return metrics
 
 
-def calibrate_penalty(
-    y_true, predictions, predicted_relative_losses, histories,
-    budget_weight, lambda_max, lambda_steps, cost_scale,
+def calibrate_acceptance_threshold(
+    y_true, predictions, acceptance_probabilities, histories,
+    budget_weight, threshold_steps, cost_scale,
 ):
-    """Minimize validation logloss + weighted normalized history cost."""
+    """Maximize validation AUC minus normalized history-budget penalty."""
     cost = history_cost_fraction(histories, cost_scale)
     full_auc = metric_auc(y_true, predictions["Full"])
     candidates = []
-    for penalty in np.linspace(0.0, lambda_max, lambda_steps):
-        selected = choose_k(predicted_relative_losses, cost, penalty)
+    for threshold in np.linspace(0.0, 1.0, threshold_steps):
+        selected = choose_k_by_acceptance(acceptance_probabilities, threshold)
         metrics, _, _ = evaluate_policy(
-            y_true, predictions, histories, selected, f"lambda={penalty:.6f}"
+            y_true, predictions, histories, selected,
+            f"acceptance_threshold={threshold:.4f}",
         )
         cost_fraction = float(np.mean(cost[np.arange(len(selected)), selected]))
+        utility = 1.0 - metrics["auc"] + budget_weight * cost_fraction
         candidates.append({
-            "lambda": float(penalty), "auc": metrics["auc"],
-            "logloss": metrics["logloss"],
+            "acceptance_threshold": float(threshold),
+            "auc": metrics["auc"], "logloss": metrics["logloss"],
             "mean_history_cost_fraction": cost_fraction,
             "history_reduction_vs_full": metrics["history_reduction_vs_full"],
             "mean_history_interactions": metrics["mean_history_interactions"],
             "budget_weight": float(budget_weight),
-            "calibration_utility": float(metrics["logloss"] + budget_weight * cost_fraction),
+            "calibration_utility": float(utility),
         })
     table = pd.DataFrame(candidates)
     best = table.sort_values(
-        ["calibration_utility", "logloss", "mean_history_interactions"]
+        ["calibration_utility", "auc", "mean_history_interactions"],
+        ascending=[True, False, True],
     ).iloc[0]
-    return float(best["lambda"]), table, full_auc, "quality_budget_utility_minimum"
+    return float(best["acceptance_threshold"]), table, full_auc, "validation_auc_budget_utility_minimum"
 
 
 def main():
     args = parse_args()
-    if args.batch_size <= 0 or args.trees <= 0 or args.lambda_steps < 2:
-        raise ValueError("batch-size/trees must be positive and lambda-steps >= 2")
+    if args.batch_size <= 0 or args.trees <= 0 or args.threshold_steps < 2:
+        raise ValueError("batch-size/trees must be positive and threshold-steps >= 2")
     if not 0.0 < args.calibration_fraction < 1.0:
         raise ValueError("calibration-fraction must be between 0 and 1")
-    if args.budget_weight < 0 or args.lambda_max < 0:
-        raise ValueError("budget-weight and lambda-max must be non-negative")
+    if args.budget_weight < 0 or args.max_logloss_regret < 0:
+        raise ValueError("budget-weight and max-logloss-regret must be non-negative")
 
     print("=" * 80)
     print("ADAPTIVE HISTORY SELECTOR V2 — QUALITY PREDICTION + COST POLICY")
@@ -423,22 +423,25 @@ def main():
         f"\nValidation split: predictor-fit={len(fit_indices)}, "
         f"policy-calibration={len(calibration_indices)}"
     )
-    predictor, target_lower, target_upper, predictor_name, model_selection_table = (
-        fit_quality_predictor(
-            val_features.iloc[fit_indices].reset_index(drop=True),
-            val_loss_matrix[fit_indices], val_y[fit_indices], args,
-        )
+    predictor_targets = make_acceptance_targets(
+        val_loss_matrix[fit_indices], args.max_logloss_regret
+    )
+    predictor, predictor_name, model_selection_table = fit_quality_predictor(
+        val_features.iloc[fit_indices].reset_index(drop=True),
+        predictor_targets, val_y[fit_indices], args,
     )
     print(f"Selected quality predictor: {predictor_name}")
     print(model_selection_table.to_string(index=False))
     if predictor_name == "MeanBaseline":
         print(
-            "WARNING: validation features did not beat the mean-only baseline; "
-            "the current selector has no demonstrated request-specific "
-            "quality-prediction skill."
+            "WARNING: request features did not beat the mean-only baseline; "
+            "the selector may behave like a global-K policy."
         )
-    calibration_loss_predictions = predict_relative_losses(
-        predictor, val_features.iloc[calibration_indices], target_lower, target_upper
+    calibration_acceptance_targets = make_acceptance_targets(
+        val_loss_matrix[calibration_indices], args.max_logloss_regret
+    )
+    calibration_acceptance_probabilities = predict_acceptance_probabilities(
+        predictor, val_features.iloc[calibration_indices]
     )
     calibration_predictions = {
         k: val_predictions[k][calibration_indices] for k in K_VALUES
@@ -450,19 +453,17 @@ def main():
         float(np.mean([len(h) for h in calibration_histories])), 1.0
     )
     calibration_actual_losses = val_loss_matrix[calibration_indices]
-    penalty, calibration_table, calibration_full_auc, calibration_status = (
-        calibrate_penalty(
-            val_y[calibration_indices],
-            calibration_predictions,
-            calibration_loss_predictions,
-            calibration_histories,
-            args.budget_weight,
-            args.lambda_max,
-            args.lambda_steps,
-            calibration_cost_scale,
+    threshold, calibration_table, calibration_full_auc, calibration_status = (
+        calibrate_acceptance_threshold(
+            val_y[calibration_indices], calibration_predictions,
+            calibration_acceptance_probabilities, calibration_histories,
+            args.budget_weight, args.threshold_steps, calibration_cost_scale,
         )
     )
-    print(f"Calibrated lambda: {penalty:.6f} ({calibration_status})")
+    print(
+        f"Calibrated acceptance threshold: {threshold:.4f} "
+        f"({calibration_status})"
+    )
     print(f"Calibration Full AUC (reference only): {calibration_full_auc:.6f}")
 
     print("\nLoading held-out test requests...")
@@ -475,12 +476,14 @@ def main():
     test_predictions = collect_predictions(
         test, vocab_size, device, args.batch_size
     )
-    test_predicted_losses = predict_relative_losses(
-        predictor, test_features, target_lower, target_upper
+    test_acceptance_probabilities = predict_acceptance_probabilities(
+        predictor, test_features
     )
     test_actual_losses = make_loss_matrix(test_y, test_predictions)
-    test_cost = history_cost_fraction(test.history_ids, calibration_cost_scale)
-    test_selected = choose_k(test_predicted_losses, test_cost, penalty)
+    test_acceptance_targets = make_acceptance_targets(
+        test_actual_losses, args.max_logloss_regret
+    )
+    test_selected = choose_k_by_acceptance(test_acceptance_probabilities, threshold)
 
     rows = [
         fixed_k_metrics(test_y, test_predictions, test.history_ids, k)
@@ -489,10 +492,11 @@ def main():
     adaptive_metrics, test_scores, test_used = evaluate_policy(
         test_y, test_predictions, test.history_ids, test_selected, "Adaptive-V2"
     )
-    adaptive_metrics["selected_lambda"] = penalty
+    adaptive_metrics["selected_acceptance_threshold"] = threshold
     adaptive_metrics["calibration_status"] = calibration_status
     adaptive_metrics["quality_predictor"] = predictor_name
     adaptive_metrics["quality_predictor_uses_features"] = predictor_name != "MeanBaseline"
+    adaptive_metrics["max_logloss_regret"] = args.max_logloss_regret
     adaptive_metrics["budget_weight"] = args.budget_weight
 
     # Oracle is strictly post-hoc: it uses test labels only for diagnostics and
@@ -533,14 +537,13 @@ def main():
         "oracle_best_actual_logloss_posthoc": oracle_actual_losses,
         "actual_logloss_regret_posthoc": actual_loss_regret,
         "selected_is_actual_best_posthoc": test_selected == oracle_indices,
-        "predicted_delta_logloss_K0_vs_Full": test_predicted_losses[:, 0],
-        "predicted_delta_logloss_K1_vs_Full": test_predicted_losses[:, 1],
-        "predicted_delta_logloss_K5_vs_Full": test_predicted_losses[:, 2],
-        "predicted_delta_logloss_K10_vs_Full": test_predicted_losses[:, 3],
-        "predicted_delta_logloss_K20_vs_Full": test_predicted_losses[:, 4],
-        "predicted_delta_logloss_K50_vs_Full": test_predicted_losses[:, 5],
-        "predicted_delta_logloss_K100_vs_Full": test_predicted_losses[:, 6],
-        "predicted_delta_logloss_KFull_vs_Full": test_predicted_losses[:, 7],
+        "predicted_acceptance_probability_K0": test_acceptance_probabilities[:, 0],
+        "predicted_acceptance_probability_K1": test_acceptance_probabilities[:, 1],
+        "predicted_acceptance_probability_K5": test_acceptance_probabilities[:, 2],
+        "predicted_acceptance_probability_K10": test_acceptance_probabilities[:, 3],
+        "predicted_acceptance_probability_K20": test_acceptance_probabilities[:, 4],
+        "predicted_acceptance_probability_K50": test_acceptance_probabilities[:, 5],
+        "predicted_acceptance_probability_K100": test_acceptance_probabilities[:, 6],
         "probability_K0": test_predictions[0],
         "probability_K1": test_predictions[1],
         "probability_K5": test_predictions[5],
@@ -563,15 +566,12 @@ def main():
     decisions.to_parquet(decisions_path, index=False)
 
     quality_diagnostics = (
-        quality_prediction_diagnostics(
-            calibration_actual_losses,
-            calibration_loss_predictions,
+        acceptance_prediction_diagnostics(
+            calibration_acceptance_targets, calibration_acceptance_probabilities,
             "validation_calibration",
         )
-        + quality_prediction_diagnostics(
-            test_actual_losses,
-            test_predicted_losses,
-            "test_posthoc",
+        + acceptance_prediction_diagnostics(
+            test_acceptance_targets, test_acceptance_probabilities, "test_posthoc",
         )
     )
     pd.DataFrame(quality_diagnostics).to_csv(
@@ -579,14 +579,11 @@ def main():
     )
     model_selection_table.to_csv(model_selection_path, index=False)
 
-    calibration_relative_targets = make_relative_loss_targets(
-        calibration_actual_losses
-    )
     permutation = permutation_importance(
         predictor,
         val_features.iloc[calibration_indices][FEATURE_NAMES],
-        calibration_relative_targets,
-        scoring="neg_mean_absolute_error",
+        calibration_acceptance_targets,
+        scoring=acceptance_macro_ap_scorer,
         n_repeats=5,
         random_state=args.random_state,
         n_jobs=-1,
@@ -605,15 +602,14 @@ def main():
         "predictor_uses_features": predictor_name != "MeanBaseline",
         "feature_names": FEATURE_NAMES,
         "k_values": K_VALUES,
-        "lambda": penalty,
+        "acceptance_threshold": threshold,
         "budget_weight": args.budget_weight,
-        "target_clip_lower": target_lower,
-        "target_clip_upper": target_upper,
+        "max_logloss_regret": args.max_logloss_regret,
         "cost_normalization_scale": calibration_cost_scale,
         "calibration_status": calibration_status,
         "calibration_full_auc_reference": calibration_full_auc,
         "cost_definition": "selected interactions normalized by fixed mean Full-history length from validation calibration",
-        "target_definition": "per-request log-loss delta for each truncated K relative to Full; Full is exact zero reference",
+        "target_definition": "binary indicator that logloss(K) <= logloss(Full) + max_logloss_regret",
     }, model_path)
 
     print("\n=== HELD-OUT TEST RESULTS ===")
@@ -638,8 +634,9 @@ def main():
         "available to the deployed selector."
     )
     print(
-        "Calibration minimizes validation logloss plus budget-weight times "
-        "normalized mean history cost; AUC is reported, not a hard gate."
+        "Calibration maximizes validation AUC minus budget-weight times "
+        "normalized mean history cost. Quality prediction is acceptable-vs-Full "
+        "classification, not per-request AUC prediction."
     )
     print(
         "Cost caveat: history-interaction reduction is a budget proxy, not "
