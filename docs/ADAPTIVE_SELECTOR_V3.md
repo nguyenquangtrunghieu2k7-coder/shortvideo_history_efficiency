@@ -61,7 +61,7 @@ Validation is split into three disjoint roles:
 
 The policy passes only if the 90% paired-bootstrap lower confidence bound for AUC(policy)-AUC(Full) is at least \(-\delta\). If certification fails, V3 falls back to Full. This prevents a policy selected from many candidates from being certified on the same observations that selected it.
 
-The held-out test set is used only after policy selection and independent validation certification. Its bootstrap interval is post-hoc inference and never changes the selected policy.
+**Protocol caveat:** Phase 8 used the validation split for checkpoint selection/early stopping. The three V3 partitions are independent of one another for selector fitting, policy tuning, and certification, but they are not a completely untouched dataset relative to the already-selected Phase 8 checkpoints. The held-out test set remains the final untouched evaluation set. Its bootstrap interval is post-hoc inference and never changes the selected policy.
 
 ## Run
 
