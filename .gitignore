@@ -28,3 +28,7 @@ reports/
 # Python tooling
 *.egg-info/models/*.pth
 models/*.pth
+
+BLOOM-FaaS-BLOOMFaaS.2025/
+data/
+Documents/
