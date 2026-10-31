@@ -75,12 +75,20 @@ def _pareto_frontier(feasible):
     return result, duplicate_count
 
 
-def _knee_point(frontier, full_policy="Fixed-K-Full", tol=1e-12):
-    """Return (selected row or None, annotated frontier, reason)."""
+def _knee_point(frontier, full_policy="Fixed-K-Full", tol=1e-12,
+                min_knee_distance=0.01):
+    """Select the strongest geometric bend, independent of curve orientation.
+
+    The signed distance is retained for diagnostics only. Its sign depends on
+    the orientation of the frontier relative to the endpoint chord, so it must
+    not decide whether a knee exists. A very small maximum distance indicates
+    an almost-linear frontier and triggers the conservative Full fallback.
+    """
     f = frontier.copy()
     f["normalized_history_saving"] = np.nan
     f["normalized_quality"] = np.nan
     f["signed_knee_distance"] = np.nan
+    f["knee_distance"] = np.nan
 
     if len(f) < 3:
         return None, f, "fewer_than_three_distinct_pareto_points"
@@ -95,7 +103,6 @@ def _knee_point(frontier, full_policy="Fixed-K-Full", tol=1e-12):
     f["normalized_history_saving"] = (f["history_saving"] - s_min) / (s_max - s_min)
     f["normalized_quality"] = (f["auc"] - q_min) / (q_max - q_min)
 
-    # Endpoints are selected by the objective definitions, not row order.
     a_idx = f.sort_values(
         ["auc", "history_cost_ratio", "policy"],
         ascending=[False, True, True], kind="mergesort"
@@ -107,8 +114,7 @@ def _knee_point(frontier, full_policy="Fixed-K-Full", tol=1e-12):
     if a_idx == b_idx:
         return None, f, "same_quality_and_saving_endpoint"
 
-    a = f.loc[a_idx]
-    b = f.loc[b_idx]
+    a, b = f.loc[a_idx], f.loc[b_idx]
     ax, ay = float(a["normalized_history_saving"]), float(a["normalized_quality"])
     bx, by = float(b["normalized_history_saving"]), float(b["normalized_quality"])
     denominator = float(np.hypot(bx - ax, by - ay))
@@ -124,15 +130,17 @@ def _knee_point(frontier, full_policy="Fixed-K-Full", tol=1e-12):
         - (by - ay) * (interior["normalized_history_saving"] - ax)
     ) / denominator
     f.loc[interior.index, "signed_knee_distance"] = signed
-    candidates = f.loc[interior.index].copy()
-    candidates = candidates[candidates["signed_knee_distance"] > tol]
-    if candidates.empty:
-        return None, f, "no_interior_point_on_ideal_side_of_chord"
+    f.loc[interior.index, "knee_distance"] = signed.abs()
 
+    candidates = f.loc[interior.index].copy()
+    max_distance = float(candidates["knee_distance"].max())
+    if not np.isfinite(max_distance) or max_distance < float(min_knee_distance):
+        return None, f, "frontier_nearly_linear_no_stable_knee"
+
+    candidates = candidates[candidates["knee_distance"] >= max_distance - tol]
     candidates = candidates.sort_values(
-        ["signed_knee_distance", "auc", "history_saving", "policy"],
-        ascending=[False, False, False, True],
-        kind="mergesort",
+        ["auc", "history_saving", "policy"],
+        ascending=[False, False, True], kind="mergesort",
     )
     return candidates.iloc[0].to_dict(), f, None
 
@@ -184,6 +192,7 @@ def calibrate_knee_policy(
             "normalized_history_saving": np.nan,
             "normalized_quality": np.nan,
             "signed_knee_distance": np.nan,
+            "knee_distance": np.nan,
             "selected_for_test": False,
         })
 
@@ -244,10 +253,10 @@ def calibrate_knee_policy(
     frontier_out["selected_for_test"] = frontier_out["policy"].eq(selected["policy"])
     all_candidates = all_candidates.drop(
         columns=["is_pareto_frontier", "normalized_history_saving",
-                 "normalized_quality", "signed_knee_distance", "selected_for_test"]
+                 "normalized_quality", "signed_knee_distance", "knee_distance", "selected_for_test"]
     ).merge(
         frontier_out[["policy", "is_pareto_frontier", "normalized_history_saving",
-                      "normalized_quality", "signed_knee_distance", "selected_for_test"]],
+                      "normalized_quality", "signed_knee_distance", "knee_distance", "selected_for_test"]],
         on="policy", how="left",
     )
     for col in ["is_pareto_frontier", "selected_for_test"]:
