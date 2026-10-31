@@ -106,6 +106,16 @@ def _candidate_regressors(args):
     }
 
 
+def _class_balanced_weights(labels):
+    y = np.asarray(labels, dtype=np.int8)
+    positive = y == 1
+    negative = y == 0
+    if not positive.any() or not negative.any():
+        raise ValueError("Class-balanced fitting requires both labels.")
+    weights = np.where(positive, 0.5 / positive.sum(), 0.5 / negative.sum())
+    return weights * (len(weights) / weights.sum())
+
+
 def fit_auc_uplift_predictor(features, labels, predictions, args, feature_names):
     """Model selection inside development validation; calibration stays separate."""
     y = np.asarray(labels, dtype=np.int8)
@@ -122,22 +132,34 @@ def fit_auc_uplift_predictor(features, labels, predictions, args, feature_names)
     select_pred = {k: np.asarray(predictions[k])[select_idx] for k in K_VALUES}
     y_fit = auc_contribution_uplift_targets(y[fit_idx], fit_pred)
     y_select = auc_contribution_uplift_targets(y[select_idx], select_pred)
+    fit_weights = _class_balanced_weights(y[fit_idx])
 
     candidates = _candidate_regressors(args)
     rows = []
     for name, model in candidates.items():
-        model.fit(x.iloc[fit_idx], y_fit)
+        model.fit(x.iloc[fit_idx], y_fit, sample_weight=fit_weights)
         predicted = np.asarray(model.predict(x.iloc[select_idx]), dtype=float)
         if predicted.ndim == 1:
             predicted = predicted.reshape(-1, y_fit.shape[1])
-        mae_by_k = np.mean(np.abs(predicted - y_select), axis=0)
-        # Per-request action-ranking agreement is a useful secondary diagnostic.
+        # AUC weights positive and negative classes equally; mirror that here.
+        absolute_error = np.abs(predicted - y_select)
+        positive_select = y[select_idx] == 1
+        negative_select = y[select_idx] == 0
+        mae_by_k = 0.5 * (
+            absolute_error[positive_select].mean(axis=0)
+            + absolute_error[negative_select].mean(axis=0)
+        )
+        # Class-balanced per-request best-action agreement is secondary.
         predicted_best = np.argmax(np.column_stack([predicted, np.zeros(len(predicted))]), axis=1)
         actual_best = np.argmax(np.column_stack([y_select, np.zeros(len(y_select))]), axis=1)
+        agreement = 0.5 * (
+            np.mean(predicted_best[positive_select] == actual_best[positive_select])
+            + np.mean(predicted_best[negative_select] == actual_best[negative_select])
+        )
         rows.append({
             "model": name,
             "selection_macro_mae": float(np.mean(mae_by_k)),
-            "selection_best_action_agreement": float(np.mean(predicted_best == actual_best)),
+            "selection_best_action_agreement": float(agreement),
         })
     table = pd.DataFrame(rows).sort_values(
         ["selection_macro_mae", "selection_best_action_agreement"],
@@ -149,7 +171,7 @@ def fit_auc_uplift_predictor(features, labels, predictions, args, feature_names)
     # subset remains untouched and is used only for lambda/policy selection.
     development_targets = auc_contribution_uplift_targets(y, predictions)
     final_model = candidates[selected_name]
-    final_model.fit(x, development_targets)
+    final_model.fit(x, development_targets, sample_weight=_class_balanced_weights(y))
     return final_model, selected_name, table
 
 
