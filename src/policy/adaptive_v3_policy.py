@@ -290,7 +290,10 @@ def calibrate_policy(y_true, predictions, histories, uplift_predictions,
             "history_cost_ratio": metrics["history_cost_ratio"],
             "history_reduction_vs_full": metrics["history_reduction_vs_full"],
             "mean_history_interactions": metrics["mean_history_interactions"],
-            "feasible": bool(ci_low >= -float(max_auc_drop)),
+            # Tune by point-estimate non-inferiority; the untouched
+            # certification split supplies the actual statistical gate.
+            "feasible": bool(delta >= -float(max_auc_drop)),
+            "ci_feasible_on_tuning": bool(ci_low >= -float(max_auc_drop)),
         })
 
     for k in K_VALUES:
