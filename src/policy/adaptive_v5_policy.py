@@ -9,10 +9,24 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
-from adaptive_v4_policy import *  # noqa: F401,F403
-from adaptive_v4_policy import (
-    K_VALUES, actions_for_fixed_k, choose_actions, evaluate_actions,
-)
+try:
+    from . import adaptive_v4_policy as _v4
+except ImportError:  # Script execution with src/policy on sys.path.
+    import adaptive_v4_policy as _v4
+
+K_VALUES = _v4.K_VALUES
+TRUNCATED_K_VALUES = _v4.TRUNCATED_K_VALUES
+actions_for_fixed_k = _v4.actions_for_fixed_k
+choose_actions = _v4.choose_actions
+evaluate_actions = _v4.evaluate_actions
+apply_selected_policy = _v4.apply_selected_policy
+apply_selected_policy_from_lengths = _v4.apply_selected_policy_from_lengths
+auc_contribution_uplift_targets = _v4.auc_contribution_uplift_targets
+fit_auc_uplift_predictor = _v4.fit_auc_uplift_predictor
+predict_auc_uplift = _v4.predict_auc_uplift
+score_matrix = _v4.score_matrix
+stratified_group_split = _v4.stratified_group_split
+stratified_paired_auc_difference_ci = _v4.stratified_paired_auc_difference_ci
 
 
 def _dominates(a, b, tol=1e-12):
