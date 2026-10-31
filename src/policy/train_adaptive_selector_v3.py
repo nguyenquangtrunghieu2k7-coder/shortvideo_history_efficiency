@@ -35,6 +35,7 @@ from adaptive_v3_policy import (  # noqa: E402
     fit_auc_uplift_predictor,
     predict_auc_uplift,
     score_matrix,
+    stratified_group_split,
     stratified_paired_auc_difference_ci,
 )
 
@@ -148,12 +149,10 @@ def main():
     val_y = np.asarray(validation.labels, dtype=np.int8)
     val_features = history_features(validation.history_ids)
 
-    # Reproduce the exact row-level splits used by the current V3 pipeline.
-    from sklearn.model_selection import train_test_split
-    all_indices = np.arange(len(val_y))
-    development_idx, tuning_idx = train_test_split(
-        all_indices, test_size=0.50,
-        random_state=args.random_state, stratify=val_y,
+    # Keep users disjoint between predictor development and policy tuning.
+    development_idx, tuning_idx = stratified_group_split(
+        val_y, validation.user_ids, n_splits=2,
+        random_state=args.random_state,
     )
     development_groups = np.asarray(validation.user_ids)[development_idx]
     tuning_groups = np.asarray(validation.user_ids)[tuning_idx]
@@ -164,10 +163,9 @@ def main():
             development_groups, tuning_groups,
             val_y[development_idx], val_y[tuning_idx],
         )
-        inner_fit_idx, inner_select_idx = train_test_split(
-            np.arange(len(development_idx)), test_size=0.20,
-            random_state=args.random_state + 11,
-            stratify=val_y[development_idx],
+        inner_fit_idx, inner_select_idx = stratified_group_split(
+            val_y[development_idx], development_groups,
+            n_splits=5, random_state=args.random_state + 11,
         )
         report_split_overlap(
             "Uplift-model fit vs model-selection",
@@ -184,8 +182,8 @@ def main():
         validation, vocab_size, device, args.batch_size
     )
 
-    # Use validation for model development and policy selection only.
-    # The held-out test split is evaluated once after the policy is frozen.
+    # Use user-disjoint validation groups for predictor development and
+    # policy tuning. The held-out test split is evaluated once after freezing.
     development_features = val_features.iloc[development_idx].reset_index(drop=True)
     development_predictions = {k: val_predictions[k][development_idx] for k in K_VALUES}
     development_y = val_y[development_idx]
@@ -195,7 +193,8 @@ def main():
         f"policy-tuning={len(tuning_idx)}"
     )
     model, model_name, model_table = fit_auc_uplift_predictor(
-        development_features, development_y, development_predictions, args, FEATURE_NAMES
+        development_features, development_y, development_predictions,
+        development_groups, args, FEATURE_NAMES
     )
     print(f"Selected uplift model: {model_name}")
     print(model_table.to_string(index=False))
