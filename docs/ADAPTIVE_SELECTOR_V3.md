@@ -26,7 +26,7 @@ V3 removes the acceptance classifier and its probability threshold. It learns a 
 
 ### 1. Request-time features
 
-Use only the available, temporally prior interaction history. Features describe history length, unique ratio, entropy, concentration, recent novelty, head-tail overlap, and repetition. No label, future interaction, or model output is used as an inference feature.
+Use the stored history-length metadata and at most the most recent 100 interaction IDs. Features describe recent unique ratio, entropy, concentration, and repetition at several bounded suffix windows. The selector does not scan the entire history to calculate its request-time features. No label, future interaction, or model output is used as an inference feature. A production implementation should maintain history length as metadata and fetch only the bounded suffix before choosing whether to retrieve more history.
 
 ### 2. Ranking-aligned uplift target
 
@@ -94,5 +94,5 @@ For a faster smoke run, use fewer trees, fewer lambda steps, and at least 20 boo
 - AUC-contribution uplift is a proxy target. Policy selection uses the actual global AUC.
 - Bootstrap confidence intervals are empirical uncertainty estimates, not guarantees.
 - History interactions are a computational-work proxy. They are not measured latency, cloud spending, energy, or Bloom-FaaS cost.
-- The current experiment runs frozen K-specific models to generate counterfactual scores offline. It does not yet demonstrate online serving or actual Bloom-FaaS integration.
+- The current experiment runs frozen K-specific models to generate counterfactual scores offline. Bounded feature extraction reduces selector-side inspection to at most 100 recent IDs, but the current offline data loader still materializes histories; it does not yet demonstrate online serving or actual Bloom-FaaS integration.
 - A V3 outcome that falls back to Full is a valid negative result: it means this experiment did not certify a cheaper policy under the chosen AUC constraint. Do not relax the constraint after inspecting test results.
