@@ -1,10 +1,11 @@
 """Train and evaluate Adaptive History Selector V5.
 
-V4 selects the minimum-history candidate among fixed-K and learned-lambda
-policies that satisfy the validation AUC-drop constraint. Higher AUC breaks
-ties in history cost.
+V5 selects the validation Pareto knee among fixed-K and learned-lambda
+policies satisfying the predeclared AUC-drop constraint. The policy is frozen
+before one-time evaluation on the held-out test split.
 
-Request-level AUC-contribution uplift is a supervised proxy. The policy is selected on a validation tuning split and evaluated once on the held-out test split.
+Request-level AUC-contribution uplift is a supervised proxy, not an exact
+decomposition of global AUC.
 """
 from __future__ import annotations
 
@@ -49,10 +50,6 @@ def parse_args():
     p.add_argument("--max-auc-drop", type=float, default=0.03,
                    help="Maximum allowed global AUC drop vs Full.")
     p.add_argument("--lambda-steps", type=int, default=41)
-    p.add_argument("--quality-weight", type=float, default=0.6,
-                   help="Weight for normalized quality retention in balanced utility.")
-    p.add_argument("--history-cost-weight", type=float, default=0.4,
-                   help="Weight for history saving in balanced utility.")
     p.add_argument("--bootstrap-repeats", type=int, default=200)
     p.add_argument("--bootstrap-seed", type=int, default=2026)
     p.add_argument(
