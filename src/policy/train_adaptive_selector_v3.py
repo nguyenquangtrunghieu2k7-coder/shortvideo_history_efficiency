@@ -318,6 +318,7 @@ def main():
     selected["candidate_certification_auc"] = cert_metrics["auc"]
     selected["candidate_certification_auc_delta_ci_low_90"] = cert_low
     selected["candidate_certification_auc_delta_ci_high_90"] = cert_high
+    policy_table["candidate_selected_before_certification"] = policy_table["policy"].eq(candidate_policy_name)
     policy_table["selected_for_test"] = policy_table["policy"].eq(selected["policy"])
     print("\nSelected policy after independent certification:")
     print(json.dumps(selected, indent=2, default=str))
