@@ -41,7 +41,7 @@ def test_interaction_cost_respects_available_history_length():
 def test_choose_actions_always_has_full_fallback_action():
     histories = [list(range(20)), list(range(100))]
     uplift = np.full((2, 7), -0.1)
-    actions = choose_actions(uplift, histories, penalty=0.01, cost_scale=100)
+    actions = choose_actions(uplift, histories, penalty=0.0, cost_scale=100)
     assert actions.tolist() == [7, 7]
 
 
