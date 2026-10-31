@@ -42,18 +42,30 @@ def test_duplicate_coordinates_are_collapsed_deterministically():
     assert "z-policy" not in set(frontier["policy"])
 
 
-def test_knee_point_selects_interior_point_on_ideal_side_of_chord():
+def test_knee_point_selects_bend_when_curve_is_on_either_chord_side():
+    # Same geometric bend, mirrored around the endpoint chord.
+    for knee_auc in (0.80, 0.70):
+        frontier = pd.DataFrame([
+            _row("quality-end", 0.90, 0.00),
+            _row("knee", knee_auc, 0.80),
+            _row("saving-end", 0.60, 1.00),
+        ])
+        selected, annotated, reason = _knee_point(frontier)
+        assert reason is None
+        assert selected["policy"] == "knee"
+        assert selected["knee_distance"] > 0
+        assert annotated["signed_knee_distance"].notna().sum() == 1
+
+
+def test_knee_point_falls_back_for_nearly_linear_frontier():
     frontier = pd.DataFrame([
         _row("quality-end", 0.90, 0.00),
-        _row("knee", 0.80, 0.80),
-        _row("saving-end", 0.60, 1.00),
+        _row("middle", 0.80, 0.50),
+        _row("saving-end", 0.70, 1.00),
     ])
     selected, annotated, reason = _knee_point(frontier)
-    assert reason is None
-    assert selected["policy"] == "knee"
-    assert selected["signed_knee_distance"] > 0
-    assert annotated["signed_knee_distance"].notna().sum() == 1
-
+    assert selected is None
+    assert reason == "frontier_nearly_linear_no_stable_knee"
 
 def test_knee_point_uses_full_fallback_when_frontier_has_too_few_points():
     frontier = pd.DataFrame([
