@@ -19,10 +19,8 @@ This is a local adaptive-history prototype, not a serverless benchmark.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
-from time import perf_counter
 
 import joblib
 import numpy as np
@@ -217,24 +215,7 @@ def build_oracle_labels(y_true, predictions, max_logloss_regret):
     eligible[:, -1] = True
 
     first_eligible = eligible.argmax(axis=1)
-    return np.asarray([K_VALUES[i] for i in first_eligible], dtype=object), loss_matrix
-
-
-def make_selector(random_state, trees, max_depth, min_samples_leaf, labels):
-    unique_labels = np.unique(labels)
-    if len(unique_labels) == 1:
-        selector = DummyClassifier(strategy="most_frequent")
-    else:
-        selector = RandomForestClassifier(
-            n_estimators=trees,
-            max_depth=max_depth,
-            min_samples_leaf=min_samples_leaf,
-            class_weight="balanced_subsample",
-            random_state=random_state,
-            n_jobs=-1,
-        )
-    selector.fit(labels_features, labels)
-    return selector
+    return np.asarray([str(K_VALUES[i]) for i in first_eligible], dtype=str), loss_matrix
 
 
 def metric_auc(y_true, scores):
@@ -280,7 +261,7 @@ def evaluate_adaptive(
 
     full_lengths = np.asarray([len(h) for h in dataset.history_ids])
     for k in K_VALUES:
-        mask = selected == k
+        mask = selected == str(k)
         if not np.any(mask):
             continue
         selected_scores[mask] = predictions[k][mask]
@@ -370,9 +351,7 @@ def main():
 
     # Train only on validation-derived request features and oracle labels.
     # The test split is not used to fit or tune the selector.
-    global labels_features
-    labels_features = val_features[FEATURE_NAMES]
-    unique_labels = np.unique(oracle_k)
+    unique_labels = pd.unique(oracle_k)
     if len(unique_labels) == 1:
         selector = DummyClassifier(strategy="most_frequent")
     else:
