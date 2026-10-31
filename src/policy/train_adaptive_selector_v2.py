@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 import torch
 from sklearn.ensemble import ExtraTreesRegressor
-from sklearn.metrics import log_loss, roc_auc_score
+from sklearn.metrics import log_loss, mean_absolute_error, mean_squared_error, r2_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 
 
@@ -146,6 +146,25 @@ def make_loss_matrix(y_true, predictions):
     return np.column_stack([
         per_row_logloss(y_true, predictions[k]) for k in K_VALUES
     ])
+
+
+def quality_prediction_diagnostics(actual_loss_matrix, predicted_loss_matrix, split_name):
+    """Post-hoc quality-predictor diagnostics; never used to select K."""
+    rows = []
+    for index, k in enumerate(K_VALUES):
+        actual = np.asarray(actual_loss_matrix[:, index], dtype=np.float64)
+        predicted = np.asarray(predicted_loss_matrix[:, index], dtype=np.float64)
+        rows.append({
+            "split": split_name,
+            "K": str(k),
+            "n_requests": len(actual),
+            "actual_mean_logloss": float(actual.mean()),
+            "predicted_mean_logloss": float(predicted.mean()),
+            "mae": float(mean_absolute_error(actual, predicted)),
+            "rmse": float(np.sqrt(mean_squared_error(actual, predicted))),
+            "r2": float(r2_score(actual, predicted)) if len(actual) > 1 else float("nan"),
+        })
+    return rows
 
 
 def metric_auc(y_true, scores):
@@ -343,6 +362,7 @@ def main():
     calibration_cost_scale = max(
         float(np.mean([len(h) for h in calibration_histories])), 1.0
     )
+    calibration_actual_losses = val_loss_matrix[calibration_indices]
     penalty, calibration_table, calibration_full_auc, calibration_status = (
         calibrate_penalty(
             val_y[calibration_indices],
@@ -369,6 +389,7 @@ def main():
         test, vocab_size, device, args.batch_size
     )
     test_predicted_losses = predictor.predict(test_features[FEATURE_NAMES])
+    test_actual_losses = make_loss_matrix(test_y, test_predictions)
     test_cost = history_cost_fraction(test.history_ids, calibration_cost_scale)
     test_selected = choose_k(test_predicted_losses, test_cost, penalty)
 
@@ -379,6 +400,16 @@ def main():
     adaptive_metrics, test_scores, test_used = evaluate_policy(
         test_y, test_predictions, test.history_ids, test_selected, "Adaptive-V2"
     )
+    adaptive_metrics["selected_lambda"] = penalty
+    adaptive_metrics["calibration_status"] = calibration_status
+
+    # Oracle is strictly post-hoc: it uses test labels only for diagnostics and
+    # is never used to select the deployed/test policy.
+    test_row_indices = np.arange(len(test_y))
+    oracle_indices = np.argmin(test_actual_losses, axis=1)
+    selected_actual_losses = test_actual_losses[test_row_indices, test_selected]
+    oracle_actual_losses = test_actual_losses[test_row_indices, oracle_indices]
+    actual_loss_regret = selected_actual_losses - oracle_actual_losses
     rows.append(adaptive_metrics)
 
     output_dir = ROOT / "data" / "processed" / "phase9_v2"
@@ -390,6 +421,7 @@ def main():
     decisions_path = output_dir / "adaptive_v2_test_decisions.parquet"
     calibration_path = output_dir / "adaptive_v2_lambda_calibration.csv"
     importance_path = output_dir / "adaptive_v2_feature_importance.csv"
+    quality_diagnostics_path = output_dir / "adaptive_v2_quality_diagnostics.csv"
     model_path = model_dir / "adaptive_history_selector_v2.joblib"
 
     pd.DataFrame(rows).to_csv(metrics_path, index=False)
@@ -403,6 +435,11 @@ def main():
         "selected_history_length": test_used,
         "long_view": test_y,
         "predicted_long_view_probability": test_scores,
+        "selected_actual_logloss": selected_actual_losses,
+        "oracle_best_K_posthoc": [str(K_VALUES[i]) for i in oracle_indices],
+        "oracle_best_actual_logloss_posthoc": oracle_actual_losses,
+        "actual_logloss_regret_posthoc": actual_loss_regret,
+        "selected_is_actual_best_posthoc": test_selected == oracle_indices,
         "predicted_loss_K0": test_predicted_losses[:, 0],
         "predicted_loss_K1": test_predicted_losses[:, 1],
         "predicted_loss_K5": test_predicted_losses[:, 2],
@@ -411,10 +448,42 @@ def main():
         "predicted_loss_K50": test_predicted_losses[:, 5],
         "predicted_loss_K100": test_predicted_losses[:, 6],
         "predicted_loss_KFull": test_predicted_losses[:, 7],
+        "probability_K0": test_predictions[0],
+        "probability_K1": test_predictions[1],
+        "probability_K5": test_predictions[5],
+        "probability_K10": test_predictions[10],
+        "probability_K20": test_predictions[20],
+        "probability_K50": test_predictions[50],
+        "probability_K100": test_predictions[100],
+        "probability_KFull": test_predictions["Full"],
+        "actual_logloss_K0": test_actual_losses[:, 0],
+        "actual_logloss_K1": test_actual_losses[:, 1],
+        "actual_logloss_K5": test_actual_losses[:, 2],
+        "actual_logloss_K10": test_actual_losses[:, 3],
+        "actual_logloss_K20": test_actual_losses[:, 4],
+        "actual_logloss_K50": test_actual_losses[:, 5],
+        "actual_logloss_K100": test_actual_losses[:, 6],
+        "actual_logloss_KFull": test_actual_losses[:, 7],
     })
     for column in FEATURE_NAMES:
         decisions[column] = test_features[column].to_numpy()
     decisions.to_parquet(decisions_path, index=False)
+
+    quality_diagnostics = (
+        quality_prediction_diagnostics(
+            calibration_actual_losses,
+            calibration_loss_predictions,
+            "validation_calibration",
+        )
+        + quality_prediction_diagnostics(
+            test_actual_losses,
+            test_predicted_losses,
+            "test_posthoc",
+        )
+    )
+    pd.DataFrame(quality_diagnostics).to_csv(
+        quality_diagnostics_path, index=False
+    )
 
     pd.DataFrame({
         "feature": FEATURE_NAMES,
@@ -446,9 +515,15 @@ def main():
     print(f"  Decisions: {decisions_path}")
     print(f"  Lambda calibration: {calibration_path}")
     print(f"  Feature importance: {importance_path}")
+    print(f"  Quality diagnostics: {quality_diagnostics_path}")
     print(
         "\nProtocol: predictor-fit and lambda calibration use disjoint "
         "validation subsets; test is held out for final evaluation."
+    )
+    print(
+        "Post-hoc diagnostic caveat: oracle-best K and actual per-request "
+        "log-loss use test labels only after policy selection; they are not "
+        "available to the deployed selector."
     )
     print(
         "Cost caveat: history-interaction reduction is a budget proxy, not "
