@@ -137,7 +137,7 @@ def main():
         raise ValueError("max-auc-drop must be non-negative and bootstrap-repeats >= 20")
 
     print("=" * 80)
-    print("ADAPTIVE HISTORY SELECTOR V4 — AUC-CONSTRAINED HISTORY MINIMIZATION")
+    print("ADAPTIVE HISTORY SELECTOR V5 — VALIDATION PARETO KNEE SELECTION")
     print("=" * 80)
     device = baseline.get_device()
     print(f"Device: {device}")
@@ -246,7 +246,8 @@ def main():
         "validation_history_saving": selected["history_saving"],
         "validation_selected_policy_auc": selected["auc"],
         "validation_selected_policy_history_cost_ratio": selected["history_cost_ratio"],
-        "validation_knee_distance": selected.get("signed_knee_distance"),
+        "validation_knee_distance": selected.get("knee_distance"),
+        "validation_signed_knee_distance": selected.get("signed_knee_distance"),
         "validation_selection_status": selected.get("selection_status"),
         "validation_fallback_reason": selected.get("fallback_reason"),
         "validation_pareto_point_count": selected.get("validation_pareto_point_count"),
@@ -301,8 +302,8 @@ def main():
         "feature_names": FEATURE_NAMES,
         "k_values": K_VALUES,
         "selected_validation_policy": selected,
-        "policy_protocol": "validation_auc_constraint_then_pareto_frontier_then_signed_knee_point; evaluate_once_on_held_out_test",
-        "selection_objective": "select_maximum_positive_signed_distance_to_validation_pareto_chord",
+        "policy_protocol": "validation_auc_constraint_then_pareto_frontier_then_orientation_invariant_knee; evaluate_once_on_held_out_test",
+        "selection_objective": "select_maximum_absolute_perpendicular_distance_to_validation_pareto_chord_if_stable",
         "policy_frozen_after_validation_tuning": True,
         "cost_normalization_scale": cost_scale,
         "max_auc_drop": args.max_auc_drop,
