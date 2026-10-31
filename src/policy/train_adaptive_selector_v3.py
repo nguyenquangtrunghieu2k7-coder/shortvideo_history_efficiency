@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT / "src" / "models"))
 sys.path.insert(0, str(ROOT / "src" / "policy"))
 
 import train_baseline as baseline  # noqa: E402
-from adaptive_v2_features import FEATURE_NAMES, history_features  # noqa: E402
+from adaptive_v3_features import FEATURE_NAMES, history_features  # noqa: E402
 from adaptive_v3_policy import (  # noqa: E402
     K_VALUES,
     TRUNCATED_K_VALUES,
