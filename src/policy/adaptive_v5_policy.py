@@ -247,6 +247,12 @@ def calibrate_knee_policy(
                              ascending=[False, False, True]).iloc[0]["policy"]
     )
 
+    # The selected row originates from the frontier before these output
+    # annotations are attached. Keep the selected-policy metadata consistent
+    # with the annotated frontier and the complete candidate table.
+    selected["is_pareto_frontier"] = selected["policy"] in set(frontier["policy"])
+    selected["selected_for_test"] = True
+
     # Copy frontier annotations and mark its selected point.
     frontier_out = annotated_frontier.copy()
     frontier_out["is_pareto_frontier"] = True
