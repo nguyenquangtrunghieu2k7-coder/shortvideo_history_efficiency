@@ -280,8 +280,7 @@ def stratified_paired_auc_difference_ci(y_true, policy_scores, full_scores,
 
 
 def calibrate_policy(y_true, predictions, histories, uplift_predictions,
-                     max_auc_drop, lambda_steps, bootstrap_repeats,
-                     random_state=42):
+                     max_auc_drop, lambda_steps):
     """Select the highest-quality candidate that passes tuning non-inferiority.
 
     The point-estimate AUC constraint is the only selection gate. Bootstrap
