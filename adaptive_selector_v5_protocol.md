@@ -76,25 +76,29 @@ x_i=\frac{S_i-S_{min}}{S_{max}-S_{min}}, \qquad
 y_i=\frac{Q_i-Q_{min}}{Q_{max}-Q_{min}}.
 \]
 
-Here x and y are both maximization objectives. The ideal point is (1, 1). The knee is defined as the interior Pareto point with the largest **signed perpendicular distance toward the ideal-point side** of the chord from A to B.
-
-For normalized A, B, and candidate P_i:
+For each interior point, calculate its signed perpendicular distance to the endpoint chord:
 
 \[
 d_i=\frac{(B_x-A_x)(P_{iy}-A_y)-(B_y-A_y)(P_{ix}-A_x)}
 {\sqrt{(B_x-A_x)^2+(B_y-A_y)^2}}.
 \]
 
-The sign is intentional: a point on the ideal-point side of the chord receives a positive score. Do not use absolute distance, because that could select a point on the opposite side of the chord.
+The sign only describes which side of the chord the point lies on. It depends on frontier orientation and is **not** a criterion for accepting or rejecting a knee. Define the geometric knee score as:
 
-Select the interior point with maximum positive d_i. Tie-break by higher validation AUC, then higher history saving, then lexicographically smaller policy identifier.
+\[
+K_i=|d_i|.
+\]
+
+Select the interior point with the largest (K_i). Tie-break by higher validation AUC, then higher history saving, then lexicographically smaller policy identifier. Retain both signed distance and absolute knee score in the frontier output for diagnostics.
+
+A maximum distance alone can still force a knee onto an almost-linear frontier. Therefore, if the maximum normalized distance is below 0.01, treat the knee as not reliably identifiable and use Full fallback. This threshold is defined on normalized objective coordinates and is independent of held-out test results.
 
 ### Degenerate or non-identifiable cases
 
 - If fewer than three distinct Pareto points remain, a knee is not identifiable.
 - If either objective has zero range, normalization is undefined and a knee is not identifiable.
-- If no interior point has signed distance greater than numerical tolerance (1e-12), a knee is not identifiable.
-- In any non-identifiable case, select Full as the conservative fallback and record the reason. Do not invent a knee by choosing the nearest midpoint.
+- If the maximum absolute perpendicular distance is below 0.01, the frontier is treated as nearly linear and no stable knee is declared.
+- In any non-identifiable case, select Full as the conservative fallback and record the reason.
 
 The implementation must validate finite inputs, positive Full history cost, and valid AUC-drop tolerance. It must handle duplicate points and floating-point tolerances explicitly.
 
@@ -107,7 +111,7 @@ Save a complete candidate table and a Pareto-frontier table containing at least:
 - history cost ratio, history saving, and mean history interactions;
 - feasibility flag and Pareto-frontier membership;
 - normalized quality and saving coordinates;
-- signed knee distance;
+- signed knee distance and absolute knee score;
 - selected-for-test flag and knee/fallback status.
 
 Also save the selected policy metadata, endpoint identifiers, number of feasible candidates, number of Pareto points, duplicate count, and fallback reason if applicable.
