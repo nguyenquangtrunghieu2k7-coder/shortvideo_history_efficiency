@@ -4,10 +4,10 @@
 
 V5 selects a history policy that balances recommendation quality and behavioral-history efficiency. It does not minimize history cost at any quality price, and it does not maximize AUC regardless of history cost.
 
-For policy \\(\\pi\\), define:
+For policy \(\pi\), define:
 
-- Quality: \\(Q(\\pi)=AUC(\\pi)\\).
-- History saving: \\(S(\\pi)=1-HistoryCost(\\pi)/HistoryCost(Full)\\).
+- Quality: \(Q(\pi)=AUC(\pi)\).
+- History saving: \(S(\pi)=1-HistoryCost(\pi)/HistoryCost(Full)\).
 
 Both objectives are maximized.
 
@@ -36,9 +36,9 @@ No candidate grid or threshold may be changed after inspecting test results.
 
 Retain the predeclared V4 validation quality constraint:
 
-\\[
-AUC(\\pi) \\ge AUC(Full)-\\delta, \\qquad \\delta=0.03.
-\\]
+\[
+AUC(\pi) \ge AUC(Full)-\delta, \qquad \delta=0.03.
+\]
 
 Feasibility is evaluated using the point estimate on the validation policy-tuning partition. Full is always included as a feasible reference candidate. The threshold is fixed before test evaluation.
 
@@ -46,10 +46,10 @@ Feasibility is evaluated using the point estimate on the validation policy-tunin
 
 For each feasible candidate, calculate:
 
-\\[
-Q_i=AUC(\\pi_i), \\qquad
-S_i=1-\\frac{HistoryCost(\\pi_i)}{HistoryCost(Full)}.
-\\]
+\[
+Q_i=AUC(\pi_i), \qquad
+S_i=1-\frac{HistoryCost(\pi_i)}{HistoryCost(Full)}.
+\]
 
 A candidate is Pareto-dominated if another feasible candidate has both:
 
@@ -71,19 +71,19 @@ Order the distinct Pareto points by increasing history saving. Identify:
 
 Normalize each objective over the Pareto frontier:
 
-\\[
-x_i=\\frac{S_i-S_{min}}{S_{max}-S_{min}}, \\qquad
-y_i=\\frac{Q_i-Q_{min}}{Q_{max}-Q_{min}}.
-\\]
+\[
+x_i=\frac{S_i-S_{min}}{S_{max}-S_{min}}, \qquad
+y_i=\frac{Q_i-Q_{min}}{Q_{max}-Q_{min}}.
+\]
 
 Here x and y are both maximization objectives. The ideal point is (1, 1). The knee is defined as the interior Pareto point with the largest **signed perpendicular distance toward the ideal-point side** of the chord from A to B.
 
 For normalized A, B, and candidate P_i:
 
-\\[
-d_i=\\frac{(B_x-A_x)(P_{iy}-A_y)-(B_y-A_y)(P_{ix}-A_x)}
-{\\sqrt{(B_x-A_x)^2+(B_y-A_y)^2}}.
-\\]
+\[
+d_i=\frac{(B_x-A_x)(P_{iy}-A_y)-(B_y-A_y)(P_{ix}-A_x)}
+{\sqrt{(B_x-A_x)^2+(B_y-A_y)^2}}.
+\]
 
 The sign is intentional: a point on the ideal-point side of the chord receives a positive score. Do not use absolute distance, because that could select a point on the opposite side of the chord.
 
