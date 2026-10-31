@@ -125,8 +125,8 @@ def make_simple_heuristic_candidates(features, histories):
             ).astype(int)
             candidates.append((f"heuristic-length-{cutoff}-{low_k}-{high_k}", actions))
     # Repetition/diversity heuristic: choose more history for diverse histories.
-    if "unique_ratio" in features:
-        values = features["unique_ratio"].to_numpy(dtype=float)
+    if "recent_unique_ratio_100" in features:
+        values = features["recent_unique_ratio_100"].to_numpy(dtype=float)
         thresholds = np.unique(np.quantile(values, [0.25, 0.5, 0.75]))
         for threshold in thresholds:
             for low_k, high_k in [(10, 50), (20, 100), (50, "Full")]:
@@ -206,7 +206,7 @@ def apply_heuristic(name, features, histories):
     else:
         threshold, low_k, high_k = float(parts[2]), int(parts[3]), parts[4]
         high_k = "Full" if high_k == "Full" else int(high_k)
-        values = features["unique_ratio"].to_numpy(dtype=float)
+        values = features["recent_unique_ratio_100"].to_numpy(dtype=float)
         cutoff = threshold
     return np.where(
         values <= cutoff,
