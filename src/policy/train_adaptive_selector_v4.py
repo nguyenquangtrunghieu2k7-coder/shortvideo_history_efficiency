@@ -261,7 +261,7 @@ def main():
     adaptive_metrics["test_auc_delta_ci_low_90"] = test_ci_low
     adaptive_metrics["test_auc_delta_ci_high_90"] = test_ci_high
 
-    out = ROOT / "data" / "processed" / "phase9_v3"
+    out = ROOT / "data" / "processed" / "phase9_v4"
     out.mkdir(parents=True, exist_ok=True)
     (ROOT / "models").mkdir(parents=True, exist_ok=True)
     metrics_path = out / "adaptive_v4_metrics.csv"
