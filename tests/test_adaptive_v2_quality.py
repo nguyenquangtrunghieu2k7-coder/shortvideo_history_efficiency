@@ -43,16 +43,22 @@ def test_target_clip_bounds_are_per_output_and_finite():
 def test_prediction_appends_full_zero_reference():
     x = pd.DataFrame(np.arange(8 * len(FEATURE_NAMES)).reshape(8, -1),
                      columns=FEATURE_NAMES)
+    # The predictor estimates one delta for each truncated K; Full is
+    # appended by predict_relative_losses as an exact zero reference.
     y = np.column_stack([
-        np.linspace(-0.5, 0.5, len(x)),
-        np.linspace(-0.2, 0.2, len(x)),
+        np.linspace(-0.5 + index * 0.01, 0.5 + index * 0.01, len(x))
+        for index in range(len(K_VALUES) - 1)
     ])
     model = DummyRegressor(strategy="mean").fit(x, y)
     predicted = predict_relative_losses(
-        model, x, np.array([-1.0, -1.0]), np.array([1.0, 1.0])
+        model,
+        x,
+        np.full(len(K_VALUES) - 1, -1.0),
+        np.full(len(K_VALUES) - 1, 1.0),
     )
 
     assert predicted.shape == (len(x), len(K_VALUES))
+    assert predicted.shape[1] == len(K_VALUES)
     np.testing.assert_array_equal(predicted[:, -1], np.zeros(len(x)))
 
 
