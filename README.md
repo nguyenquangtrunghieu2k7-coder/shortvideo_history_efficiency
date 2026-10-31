@@ -289,7 +289,7 @@ Test paired-bootstrap 90% CI vs Full: `[-0.038820, -0.011789]`.
 
 V6 keeps the V5 Pareto-knee strategy but strengthens feasibility. A candidate must satisfy both:
 
-$$$
+$$
 \Delta AUC\geq -0.03 \quad\text{and}\quad LCB_{90\%}(\Delta AUC)\geq -0.03.
 $$
 
