@@ -210,7 +210,27 @@ def fit_quality_predictor(features, loss_matrix, labels, args):
 
 
 def predict_relative_losses(model, features, lower, upper):
-    pred = np.clip(model.predict(features[FEATURE_NAMES]), lower, upper)
+    """Predict one relative-loss value per truncated K and append Full=0."""
+    pred = np.asarray(model.predict(features[FEATURE_NAMES]), dtype=np.float64)
+    if pred.ndim == 1:
+        pred = pred.reshape(-1, 1)
+
+    expected_outputs = len(K_VALUES) - 1
+    if pred.ndim != 2 or pred.shape[1] != expected_outputs:
+        raise ValueError(
+            f"Quality predictor must return {expected_outputs} outputs "
+            f"(one for each K except Full); received shape {pred.shape}."
+        )
+
+    lower = np.asarray(lower, dtype=np.float64).reshape(-1)
+    upper = np.asarray(upper, dtype=np.float64).reshape(-1)
+    if lower.size != expected_outputs or upper.size != expected_outputs:
+        raise ValueError(
+            f"Target clipping bounds must each contain {expected_outputs} values; "
+            f"received lower={lower.size}, upper={upper.size}."
+        )
+
+    pred = np.clip(pred, lower, upper)
     return np.column_stack([pred, np.zeros(len(pred), dtype=np.float64)])
 
 
