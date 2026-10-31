@@ -1,12 +1,12 @@
-"""Train, calibrate, and evaluate Adaptive History Selector V3.
+"""Train and evaluate Adaptive History Selector V3.
 
-V3 targets the final objective directly:
-  minimize history interactions subject to a validation-calibrated global AUC
-  non-inferiority constraint against the Full-history reference.
+V3 is quality-first: select the highest-AUC candidate among fixed-K and
+learned-lambda policies that satisfy the tuning AUC and paired-bootstrap
+non-inferiority constraints. History interactions are reported as the cost
+trade-off; they are not maximized at the expense of recommendation quality.
 
-Request-level AUC-contribution uplift is only a supervised proxy used to learn
-which actions may help. The actual policy is selected using global validation
-AUC and a paired, class-stratified bootstrap lower confidence bound.
+Request-level AUC-contribution uplift is a supervised proxy. The selected
+policy is independently certified once before test evaluation.
 """
 from __future__ import annotations
 
@@ -109,96 +109,6 @@ def collect_predictions(dataset, vocab_size, device, batch_size):
     return predictions
 
 
-def make_simple_heuristic_candidates(features, histories):
-    """Transparent, request-time baselines calibrated on validation only."""
-    from adaptive_v3_policy import actions_for_fixed_k, interaction_matrix
-    n = len(features)
-    candidates = []
-    lengths = np.asarray([len(h) for h in histories])
-    # History-length heuristic: shorter available histories are capped less.
-    for cutoff in [20, 50, 100, 200, 400]:
-        for low_k, high_k in [(5, 20), (10, 50), (20, 100)]:
-            actions = np.where(
-                lengths <= cutoff,
-                K_VALUES.index(low_k),
-                K_VALUES.index(high_k),
-            ).astype(int)
-            candidates.append((f"heuristic-length-{cutoff}-{low_k}-{high_k}", actions))
-    # Repetition/diversity heuristic: choose more history for diverse histories.
-    if "recent_unique_ratio_100" in features:
-        values = features["recent_unique_ratio_100"].to_numpy(dtype=float)
-        thresholds = np.unique(np.quantile(values, [0.25, 0.5, 0.75]))
-        for threshold in thresholds:
-            for low_k, high_k in [(10, 50), (20, 100), (50, "Full")]:
-                actions = np.where(
-                    values <= threshold,
-                    K_VALUES.index(low_k),
-                    K_VALUES.index(high_k),
-                ).astype(int)
-                candidates.append((
-                    f"heuristic-diversity-{threshold:.5f}-{low_k}-{high_k}",
-                    actions,
-                ))
-    return candidates
-
-
-def calibrate_with_heuristics(y, predictions, histories, uplift, features, args):
-    """Include transparent heuristics in the same validation feasibility test."""
-    from adaptive_v3_policy import (
-        actions_for_fixed_k,
-        evaluate_actions,
-        stratified_paired_auc_difference_ci,
-    )
-    selected, table, cost_scale, full_auc = calibrate_policy(
-        y, predictions, histories, uplift,
-        max_auc_drop=args.max_auc_drop,
-        lambda_steps=args.lambda_steps,
-        bootstrap_repeats=args.bootstrap_repeats,
-        random_state=args.bootstrap_seed,
-    )
-    heuristic_rows = []
-    full_scores = np.asarray(predictions["Full"], dtype=float)
-    for name, actions in make_simple_heuristic_candidates(features, histories):
-        metrics, scores = evaluate_actions(y, predictions, histories, actions, name)
-        low, high = stratified_paired_auc_difference_ci(
-            y, scores, full_scores,
-            repeats=args.bootstrap_repeats,
-            random_state=args.bootstrap_seed + len(heuristic_rows) + 1000,
-        )
-        heuristic_rows.append({
-            "policy": name,
-            "policy_type": "heuristic",
-            "penalty": np.nan,
-            "fixed_K": np.nan,
-            "auc": metrics["auc"],
-            "auc_delta_vs_full": metrics["auc"] - full_auc,
-            "auc_delta_ci_low_90": low,
-            "auc_delta_ci_high_90": high,
-            "history_cost_ratio": metrics["history_cost_ratio"],
-            "history_reduction_vs_full": metrics["history_reduction_vs_full"],
-            "mean_history_interactions": metrics["mean_history_interactions"],
-            # Candidate screening uses point-estimate feasibility. The
-            # independent certification split is the sole CI-based gate.
-            "feasible": bool((metrics["auc"] - full_auc) >= -args.max_auc_drop),
-            "ci_feasible_on_tuning": bool(low >= -args.max_auc_drop),
-            "selected_for_test": False,
-        })
-    if heuristic_rows:
-        heuristic_table = pd.DataFrame(heuristic_rows)
-        table = pd.concat([table, heuristic_table], ignore_index=True)
-        feasible_heuristics = heuristic_table[heuristic_table["feasible"]]
-        if not feasible_heuristics.empty:
-            best_heuristic = feasible_heuristics.sort_values(
-                ["history_cost_ratio", "auc"], ascending=[True, False]
-            ).iloc[0]
-            if float(best_heuristic["history_cost_ratio"]) < float(selected["history_cost_ratio"]) - 1e-9:
-                selected = best_heuristic.to_dict()
-                selected["deployment_mode"] = "heuristic"
-                selected["heuristic_name"] = selected["policy"]
-    table["selected_for_test"] = table["policy"].eq(selected["policy"])
-    return selected, table, cost_scale, full_auc
-
-
 def main():
     args = parse_args()
     if args.batch_size <= 0 or args.trees <= 0 or args.lambda_steps < 2:
@@ -255,9 +165,12 @@ def main():
     tuning_predictions = {k: val_predictions[k][tuning_idx] for k in K_VALUES}
     tuning_histories = [validation.history_ids[i] for i in tuning_idx]
     tuning_uplift = predict_auc_uplift(model, tuning_features, FEATURE_NAMES)
-    selected, policy_table, cost_scale, tuning_full_auc = calibrate_with_heuristics(
-        val_y[tuning_idx], tuning_predictions, tuning_histories,
-        tuning_uplift, tuning_features, args,
+    selected, policy_table, cost_scale, tuning_full_auc = calibrate_policy(
+        val_y[tuning_idx], tuning_predictions, tuning_histories, tuning_uplift,
+        max_auc_drop=args.max_auc_drop,
+        lambda_steps=args.lambda_steps,
+        bootstrap_repeats=args.bootstrap_repeats,
+        random_state=args.bootstrap_seed,
     )
 
     # Certify the selected policy exactly once on untouched validation rows.
@@ -412,12 +325,12 @@ def main():
         "feature_names": FEATURE_NAMES,
         "k_values": K_VALUES,
         "selected_validation_policy": selected,
-        "policy_protocol": "candidate_screen_by_validation_point_auc_then_single_independent_certification_ci_gate",
+        "policy_protocol": "select_highest_auc_among_tuning_ci_feasible_fixed_and_learned_candidates_then_single_independent_certification_ci_gate",
         "policy_frozen_after_certification": True,
         "cost_normalization_scale": cost_scale,
         "max_auc_drop": args.max_auc_drop,
         "target_definition": "per-request AUC-contribution uplift vs Full reference scores; proxy target only",
-        "policy_constraint": "minimum history interactions among candidates passing the validation point-AUC screen, followed by one independent certification 90% CI gate; Full fallback on certification failure",
+        "policy_constraint": "highest tuning AUC among candidates passing both point-AUC and paired-bootstrap lower-bound constraints; one independent certification 90% CI gate; Full fallback on certification failure",
     }, model_path)
 
     print("\n=== HELD-OUT TEST RESULTS ===")
