@@ -80,7 +80,7 @@ def _candidate_regressors(args):
                 min_samples_leaf=args.min_samples_leaf,
                 max_features=0.9,
                 random_state=args.random_state,
-                n_jobs=-1,
+                n_jobs=1,
             ), n_jobs=-1
         ),
         "RandomForestRegressor": MultiOutputRegressor(
@@ -89,7 +89,7 @@ def _candidate_regressors(args):
                 min_samples_leaf=args.min_samples_leaf,
                 max_features=0.9,
                 random_state=args.random_state,
-                n_jobs=-1,
+                n_jobs=1,
             ), n_jobs=-1
         ),
         "HistGradientBoostingRegressor": MultiOutputRegressor(
@@ -329,8 +329,3 @@ def _parse_k(value):
     if str(value) == "Full":
         return "Full"
     return int(value)
-
-
-def test_bootstrap_placeholder():
-    """Kept as an importable smoke-test target; not executed by the experiment."""
-    return True
