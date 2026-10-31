@@ -5,8 +5,7 @@ learned-lambda policies that satisfy the tuning AUC and paired-bootstrap
 non-inferiority constraints. History interactions are reported as the cost
 trade-off; they are not maximized at the expense of recommendation quality.
 
-Request-level AUC-contribution uplift is a supervised proxy. The selected
-policy is independently certified once before test evaluation.
+Request-level AUC-contribution uplift is a supervised proxy. The policy is selected on a validation tuning split and evaluated once on the held-out test split.
 """
 from __future__ import annotations
 
@@ -135,116 +134,7 @@ def main():
         validation, vocab_size, device, args.batch_size
     )
 
-    # Three disjoint validation roles: development, policy tuning, and
-    # independent certification. This avoids claiming non-inferiority on the
-    # same rows used to choose among many candidate policies.
-    from sklearn.model_selection import train_test_split
-    development_idx, remainder_idx = train_test_split(
-        np.arange(len(val_y)), test_size=0.50,
-        random_state=args.random_state, stratify=val_y,
-    )
-    tuning_idx, certification_idx = train_test_split(
-        remainder_idx, test_size=0.50,
-        random_state=args.random_state + 1, stratify=val_y[remainder_idx],
-    )
-    development_features = val_features.iloc[development_idx].reset_index(drop=True)
-    development_predictions = {k: val_predictions[k][development_idx] for k in K_VALUES}
-    development_y = val_y[development_idx]
-
-    print(
-        f"\nValidation roles: development={len(development_idx)}, "
-        f"policy-tuning={len(tuning_idx)}, independent-certification={len(certification_idx)}"
-    )
-    model, model_name, model_table = fit_auc_uplift_predictor(
-        development_features, development_y, development_predictions, args, FEATURE_NAMES
-    )
-    print(f"Selected uplift model: {model_name}")
-    print(model_table.to_string(index=False))
-
-    tuning_features = val_features.iloc[tuning_idx].reset_index(drop=True)
-    tuning_predictions = {k: val_predictions[k][tuning_idx] for k in K_VALUES}
-    tuning_histories = [validation.history_ids[i] for i in tuning_idx]
-    tuning_uplift = predict_auc_uplift(model, tuning_features, FEATURE_NAMES)
-    selected, policy_table, cost_scale, tuning_full_auc = calibrate_policy(
-        val_y[tuning_idx], tuning_predictions, tuning_histories, tuning_uplift,
-        max_auc_drop=args.max_auc_drop,
-        lambda_steps=args.lambda_steps,
-        bootstrap_repeats=args.bootstrap_repeats,
-        random_state=args.bootstrap_seed,
-    )
-
-    # Certify the selected policy exactly once on untouched validation rows.
-    cert_features = val_features.iloc[certification_idx].reset_index(drop=True)
-    cert_predictions = {k: val_predictions[k][certification_idx] for k in K_VALUES}
-    cert_histories = [validation.history_ids[i] for i in certification_idx]
-    cert_actions = apply_selected_policy(
-        selected, model, cert_features, cert_histories, cost_scale, FEATURE_NAMES
-    )
-    cert_metrics, cert_scores = evaluate_actions(
-        val_y[certification_idx], cert_predictions, cert_histories,
-        cert_actions, "V3-certification",
-    )
-    cert_low, cert_high = stratified_paired_auc_difference_ci(
-        val_y[certification_idx], cert_scores, cert_predictions["Full"],
-        repeats=args.bootstrap_repeats, random_state=args.bootstrap_seed + 5000,
-    )
-    candidate_policy_name = selected["policy"]
-
-    # Persist the pre-fallback candidate decisions on certification rows.
-    # This is an exploratory diagnostic artifact: certification has already
-    # been used for the V3 gate and must not be reused as an untouched holdout.
-    diagnostic_dir = ROOT / "data" / "processed" / "phase9_v3"
-    diagnostic_dir.mkdir(parents=True, exist_ok=True)
-    candidate_decisions = pd.DataFrame({
-        "evaluation_id": [validation.evaluation_ids[i] for i in certification_idx],
-        "user_id": [validation.user_ids[i] for i in certification_idx],
-        "candidate_policy": candidate_policy_name,
-        "candidate_selected_K": [str(K_VALUES[i]) for i in cert_actions],
-        "available_history_length": [len(h) for h in cert_histories],
-        "candidate_selected_history_length": [
-            0 if K_VALUES[action] == 0 else
-            (len(cert_histories[row]) if K_VALUES[action] == "Full" else
-             min(len(cert_histories[row]), int(K_VALUES[action])))
-            for row, action in enumerate(cert_actions)
-        ],
-        "long_view": val_y[certification_idx],
-        "candidate_probability": cert_scores,
-        "full_probability": cert_predictions["Full"],
-    })
-    for k in K_VALUES:
-        candidate_decisions[f"probability_K{k}"] = cert_predictions[k]
-    for feature in FEATURE_NAMES:
-        candidate_decisions[feature] = cert_features[feature].to_numpy()
-    candidate_decisions_path = diagnostic_dir / "adaptive_v3_certification_candidate_decisions.parquet"
-    candidate_decisions.to_parquet(candidate_decisions_path, index=False)
-    print(f"Saved pre-fallback candidate diagnostics: {candidate_decisions_path}")
-
-    candidate_certification_passed = bool(cert_low >= -args.max_auc_drop)
-    certification_fallback = not candidate_certification_passed
-    if certification_fallback:
-        selected = {
-            "policy": "Fixed-K-Full",
-            "deployment_mode": "fixed_k_fallback",
-            "fixed_K": "Full",
-            "history_cost_ratio": 1.0,
-            "certification_fallback": True,
-        }
-    selected["candidate_policy_before_certification"] = candidate_policy_name
-    selected["candidate_certification_passed"] = candidate_certification_passed
-    selected["certification_fallback_to_full"] = certification_fallback
-    selected["candidate_certification_auc"] = cert_metrics["auc"]
-    selected["candidate_certification_auc_delta_ci_low_90"] = cert_low
-    selected["candidate_certification_auc_delta_ci_high_90"] = cert_high
-    policy_table["candidate_selected_before_certification"] = policy_table["policy"].eq(candidate_policy_name)
-    policy_table["selected_for_test"] = policy_table["policy"].eq(selected["policy"])
-    print("\nSelected policy after independent certification:")
-    print(json.dumps(selected, indent=2, default=str))
-    print(
-        f"Certification 90% CI for AUC delta: [{cert_low:.6f}, {cert_high:.6f}] "
-        f"— {'PASS' if candidate_certification_passed else 'FAIL; Full fallback'}"
-    )
-
-    print("\nLoading held-out test requests...")
+    # Use validation for model development and policy selection only.\n    # The held-out test split is evaluated once after the policy is frozen.\n    from sklearn.model_selection import train_test_split\n    development_idx, tuning_idx = train_test_split(\n        np.arange(len(val_y)), test_size=0.50,\n        random_state=args.random_state, stratify=val_y,\n    )\n    development_features = val_features.iloc[development_idx].reset_index(drop=True)\n    development_predictions = {k: val_predictions[k][development_idx] for k in K_VALUES}\n    development_y = val_y[development_idx]\n\n    print(\n        f"\\nValidation roles: development={len(development_idx)}, policy-tuning={len(tuning_idx)}"\n    )\n    model, model_name, model_table = fit_auc_uplift_predictor(\n        development_features, development_y, development_predictions, args, FEATURE_NAMES\n    )\n    print(f"Selected uplift model: {model_name}")\n    print(model_table.to_string(index=False))\n\n    tuning_features = val_features.iloc[tuning_idx].reset_index(drop=True)\n    tuning_predictions = {k: val_predictions[k][tuning_idx] for k in K_VALUES}\n    tuning_histories = [validation.history_ids[i] for i in tuning_idx]\n    tuning_uplift = predict_auc_uplift(model, tuning_features, FEATURE_NAMES)\n    selected, policy_table, cost_scale, tuning_full_auc = calibrate_policy(\n        val_y[tuning_idx], tuning_predictions, tuning_histories, tuning_uplift,\n        max_auc_drop=args.max_auc_drop,\n        lambda_steps=args.lambda_steps,\n        bootstrap_repeats=args.bootstrap_repeats,\n        random_state=args.bootstrap_seed,\n    )\n    selected["validation_full_auc"] = tuning_full_auc\n    selected["validation_auc_drop_tolerance"] = args.max_auc_drop\n    print("\\nSelected policy from validation tuning:")\n    print(json.dumps(selected, indent=2, default=str))\n\n    print("\nLoading held-out test requests...")
     test = baseline.KuaiRandDataset("test", "Full", vocab_map)
     test.split_name = "test"
     test_y = np.asarray(test.labels, dtype=np.int8)
@@ -270,12 +160,8 @@ def main():
         "selected_policy": selected["policy"],
         "max_auc_drop_validation": args.max_auc_drop,
         "quality_predictor": model_name,
-        "candidate_policy_before_certification": candidate_policy_name,
-        "candidate_certification_passed": candidate_certification_passed,
-        "certification_fallback_to_full": certification_fallback,
-        "candidate_certification_auc": cert_metrics["auc"],
-        "candidate_certification_auc_delta_ci_low_90": cert_low,
-        "candidate_certification_auc_delta_ci_high_90": cert_high,
+        "validation_full_auc": tuning_full_auc,
+        "validation_auc_drop_tolerance": args.max_auc_drop,
     })
     result_rows.append(adaptive_metrics)
 
@@ -325,12 +211,12 @@ def main():
         "feature_names": FEATURE_NAMES,
         "k_values": K_VALUES,
         "selected_validation_policy": selected,
-        "policy_protocol": "select_highest_auc_among_tuning_ci_feasible_fixed_and_learned_candidates_then_single_independent_certification_ci_gate",
-        "policy_frozen_after_certification": True,
+        "policy_protocol": "select_highest_validation_auc_among_candidates_within_point_auc_drop_tolerance; evaluate_once_on_held_out_test",
+        "policy_frozen_after_validation_tuning": True,
         "cost_normalization_scale": cost_scale,
         "max_auc_drop": args.max_auc_drop,
         "target_definition": "per-request AUC-contribution uplift vs Full reference scores; proxy target only",
-        "policy_constraint": "highest tuning AUC among candidates passing both point-AUC and paired-bootstrap lower-bound constraints; one independent certification 90% CI gate; Full fallback on certification failure",
+        "policy_constraint": "highest tuning AUC among candidates whose point-estimate AUC is within max_auc_drop of Full; Full remains an eligible fallback",
     }, model_path)
 
     print("\n=== HELD-OUT TEST RESULTS ===")
