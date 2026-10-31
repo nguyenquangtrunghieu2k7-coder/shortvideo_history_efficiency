@@ -269,13 +269,13 @@ def main():
     adaptive_metrics["test_auc_delta_ci_low_90"] = test_ci_low
     adaptive_metrics["test_auc_delta_ci_high_90"] = test_ci_high
 
-    out = ROOT / "data" / "processed" / "phase9_v5"
+    out = ROOT / "data" / "processed" / "phase9_v6"
     out.mkdir(parents=True, exist_ok=True)
     (ROOT / "models").mkdir(parents=True, exist_ok=True)
     metrics_path = out / "adaptive_v6_metrics.csv"
     policy_path = out / "adaptive_v6_validation_pareto_frontier.csv"
     decisions_path = out / "adaptive_v6_test_decisions.parquet"
-    model_path = ROOT / "models" / "adaptive_history_selector_v5.joblib"
+    model_path = ROOT / "models" / "adaptive_history_selector_v6.joblib"
 
     pd.DataFrame(result_rows).to_csv(metrics_path, index=False)
     policy_frontier.to_csv(policy_path, index=False)
