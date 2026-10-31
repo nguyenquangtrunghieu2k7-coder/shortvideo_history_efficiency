@@ -163,7 +163,7 @@ def target_clip_bounds(targets):
 
 
 def fit_quality_predictor(features, loss_matrix, labels, args):
-    """Select ExtraTrees or RandomForest on an inner split, then refit."""
+    """Select among tree ensembles and a mean baseline on an inner split."""
     targets = make_relative_loss_targets(loss_matrix)
     fit_ids, select_ids = train_test_split(
         np.arange(len(targets)), test_size=0.20,
