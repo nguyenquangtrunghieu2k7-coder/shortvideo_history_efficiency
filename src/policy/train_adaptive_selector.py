@@ -42,13 +42,9 @@ FEATURE_NAMES = [
     "history_length",
     "unique_history_count",
     "unique_ratio",
-    "repeat_ratio",
     "unique_last_5",
     "unique_last_20",
     "unique_last_50",
-    "candidate_seen",
-    "candidate_frequency",
-    "candidate_recency_distance",
 ]
 EPS = 1e-7
 
@@ -74,39 +70,27 @@ def parse_args():
     return parser.parse_args()
 
 
-def history_features(histories, candidates) -> pd.DataFrame:
-    """Build request-time features; never reads labels or future outcomes."""
+def history_features(histories, candidates=None) -> pd.DataFrame:
     rows = []
 
-    for history, candidate in zip(histories, candidates):
+    for history in histories:
         values = [int(x) for x in history]
         n = len(values)
-        unique = set(values)
-        unique_n = len(unique)
-        candidate = int(candidate)
 
-        positions = [
-            i for i, value in enumerate(values)
-            if value == candidate
-        ]
+        unique_n = len(set(values))
 
         rows.append({
             "history_length": n,
             "unique_history_count": unique_n,
             "unique_ratio": unique_n / n if n else 0.0,
-            "repeat_ratio": 1.0 - unique_n / n if n else 0.0,
-            "unique_last_5": len(set(values[-5:])) / min(n, 5)
-            if n else 0.0,
-            "unique_last_20": len(set(values[-20:])) / min(n, 20)
-            if n else 0.0,
-            "unique_last_50": len(set(values[-50:])) / min(n, 50)
-            if n else 0.0,
-            "candidate_seen": int(bool(positions)),
-            "candidate_frequency": len(positions),
-            # 0 means the candidate appeared in the most recent history row.
-            # n means it has never appeared.
-            "candidate_recency_distance": (
-                n - 1 - positions[-1] if positions else n
+            "unique_last_5": (
+                len(set(values[-5:])) / min(n, 5) if n else 0.0
+            ),
+            "unique_last_20": (
+                len(set(values[-20:])) / min(n, 20) if n else 0.0
+            ),
+            "unique_last_50": (
+                len(set(values[-50:])) / min(n, 50) if n else 0.0
             ),
         })
 
@@ -295,9 +279,16 @@ def evaluate_adaptive(
         "long_view": y_true,
         "predicted_long_view_probability": selected_scores,
     })
+
+    # Save all request-time features used by the selector.
+    feature_frame = features[FEATURE_NAMES].reset_index(drop=True)
+    decisions = pd.concat([decisions, feature_frame], axis=1)
+
+    # Save predictions from every frozen K model for post-hoc analysis.
+    for k in K_VALUES:
+        decisions[f"probability_K{k}"] = predictions[k]
+
     return metrics, decisions
-
-
 def main():
     args = parse_args()
     if args.max_logloss_regret < 0:
