@@ -154,9 +154,9 @@ def run(args):
     features = history_features(originals)
     feature_seconds = perf_counter() - t0
     if args.mode == "v4":
-        path = ROOT / "models" / "adaptive_history_selector_v4.joblib"
+        path = args.policy_path.expanduser().resolve() if args.policy_path else ROOT / "models" / "adaptive_history_selector_v4.joblib"
         if not path.exists():
-            raise FileNotFoundError(f"Missing frozen policy: {path}")
+            raise FileNotFoundError(f"Missing frozen policy: {path}. Supply --policy-path /absolute/path/to/adaptive_history_selector_v4.joblib; do not retrain on test.")
         artifact = joblib.load(path)
         if not artifact.get("policy_frozen_after_validation_tuning"):
             raise ValueError("V4 policy artifact is not marked frozen")
@@ -224,6 +224,7 @@ def run(args):
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--mode", choices=["full", "v4"], default="v4")
+    p.add_argument("--policy-path", type=Path, help="Path to existing frozen V4 joblib artifact")
     p.add_argument("--bloom", action="store_true")
     p.add_argument("--shards", type=int, default=8)
     p.add_argument("--bits-per-key", type=int, default=12)
