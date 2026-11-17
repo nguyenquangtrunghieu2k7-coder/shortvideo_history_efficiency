@@ -1,12 +1,14 @@
 """M2.3E loopback-only authenticated HTTP history API (standard library).
 
 Deliberately local-only: not a public network production deployment.
-Each request opens a verified snapshot; correctness over throughput.
+Snapshot verified at startup, pinned until restart; read-only SQLite per request.
 """
 from __future__ import annotations
 
 import argparse
 import hmac
+import hashlib
+import sqlite3
 import json
 import os
 import threading
@@ -23,6 +25,12 @@ MAX_KEY = 256
 def make_handler(root, hmac_key, api_token):
     if len(api_token) < 32:
         raise ValueError("API token must have at least 32 characters")
+
+    # Verify the active snapshot once, and pin it until server restart.
+    with open_active(root, hmac_key) as verified:
+        snapshot_id = verified.manifest["snapshot_id"]
+        shard_count = verified.shards
+    snapshot_dir = Path(root) / snapshot_id
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "HistoryAPI/0.1"
@@ -48,11 +56,7 @@ def make_handler(root, hmac_key, api_token):
             if parsed.path == "/health":
                 return self._reply(200, {"status": "alive"})
             if parsed.path == "/ready":
-                try:
-                    with open_active(root, hmac_key) as store:
-                        return self._reply(200, {"status": "ready", "snapshot_id": store.manifest["snapshot_id"]})
-                except (OSError, ValueError, KeyError, json.JSONDecodeError):
-                    return self._reply(503, {"status": "unavailable"})
+                return self._reply(200, {"status": "ready", "snapshot_id": snapshot_id})
             if parsed.path != "/history":
                 return self._reply(404, {"error": "not_found"})
             params = parse_qs(parsed.query, keep_blank_values=True)
@@ -69,9 +73,14 @@ def make_handler(root, hmac_key, api_token):
             else:
                 return self._reply(400, {"error": "invalid_k"})
             try:
-                with open_active(root, hmac_key) as store:
-                    history = store.get_last_k(key, k, mode="indexed_exact")
-            except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                shard = int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big") % shard_count
+                db = snapshot_dir / f"shard_{shard}.sqlite"
+                with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True) as conn:
+                    row = conn.execute("SELECT payload FROM histories WHERE key=?", (key,)).fetchone()
+                history = None if row is None else json.loads(row[0])
+                if history is not None:
+                    history = history if k == "Full" else (history[-k:] if k else [])
+            except (OSError, ValueError, KeyError, sqlite3.Error, json.JSONDecodeError):
                 return self._reply(503, {"error": "snapshot_unavailable"})
             if history is None:
                 return self._reply(404, {"error": "history_not_found"})
