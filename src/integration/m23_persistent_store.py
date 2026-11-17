@@ -106,6 +106,18 @@ class HistoryStore:
         if m["schema_version"] != SCHEMA_VERSION or m["snapshot_id"] != snapshot_id:
             raise ValueError("Snapshot contract mismatch")
         self.shards = m["shards"]
+        if not isinstance(self.shards, int) or self.shards < 1:
+            raise ValueError("Invalid shard count")
+        if set(m["files"]) != {f"shard_{i}.sqlite" for i in range(self.shards)}:
+            raise ValueError("Manifest shard inventory mismatch")
+        if set(m["bloom"]) != {str(i) for i in range(self.shards)}:
+            raise ValueError("Manifest Bloom inventory mismatch")
+        if not isinstance(m["records"], int) or m["records"] < 0:
+            raise ValueError("Invalid record count")
+        if not isinstance(m["bits_per_key"], int) or m["bits_per_key"] < 1:
+            raise ValueError("Invalid bits_per_key")
+        if not isinstance(m["hashes"], int) or m["hashes"] < 1:
+            raise ValueError("Invalid hashes")
         if verify:
             for name, expected in m["files"].items():
                 if _sha(self.path / name) != expected:
@@ -119,6 +131,20 @@ class HistoryStore:
                 conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)
                 self.connections.append(conn)
                 meta = m["bloom"][str(i)]
+                if (meta["file"] != f"shard_{i}.bloom" or
+                        meta["k"] != m["hashes"] or
+                        not isinstance(meta["keys"], int) or meta["keys"] < 0 or
+                        meta["m"] != max(64, meta["keys"] * m["bits_per_key"])):
+                    raise ValueError(f"Invalid Bloom metadata in shard {i}")
+                if verify:
+                    count = 0
+                    for (stored_key,) in conn.execute("SELECT key FROM histories"):
+                        count += 1
+                        route = int.from_bytes(hashlib.sha256(stored_key.encode()).digest()[:8], "big") % self.shards
+                        if route != i:
+                            raise ValueError(f"Wrong shard routing: {stored_key}")
+                    if count != meta["keys"]:
+                        raise ValueError(f"Shard key count mismatch: {i}")
                 bloom_path = self.path / meta["file"]
                 if not bloom_path.is_file() or _sha(bloom_path) != meta["sha256"]:
                     self.blooms.append(None)
@@ -129,7 +155,17 @@ class HistoryStore:
                     self.blooms.append(None)
                     continue
                 bloom._bits[:] = bits
-                self.blooms.append(bloom)
+                # Check every SQLite key: a stale Bloom with a valid checksum
+                # must never suppress a real history lookup.
+                if verify and any(
+                    not bloom.might_contain(stored_key)
+                    for (stored_key,) in conn.execute("SELECT key FROM histories")
+                ):
+                    self.blooms.append(None)
+                else:
+                    self.blooms.append(bloom)
+            if verify and sum(m["bloom"][str(i)]["keys"] for i in range(self.shards)) != m["records"]:
+                raise ValueError("Snapshot total key count mismatch")
         except Exception:
             self.close()
             raise
