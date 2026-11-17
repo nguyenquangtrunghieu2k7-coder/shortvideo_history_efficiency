@@ -9,7 +9,6 @@ import json
 import os
 import resource
 import statistics
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -44,46 +43,39 @@ def benchmark(root, snapshot_id, *, workers=8, repeats=5, max_keys=0):
     if not keys:
         raise ValueError("Snapshot has no histories to benchmark")
 
-    # Each thread opens its own connection. Verification is performed once per worker,
-    # outside timed queries, to separate cold startup from steady-state latency.
-    local = threading.local()
-    opened = []
-    lock = threading.Lock()
-    def worker(query):
-        store = getattr(local, "store", None)
-        if store is None:
-            store = HistoryStore(root, snapshot_id, verify=True)
-            local.store = store
-            with lock:
-                opened.append(store)
-        key, mode = query
-        start = time.perf_counter_ns()
-        result = store.get(key, mode=mode)
-        elapsed_ms = (time.perf_counter_ns() - start) / 1_000_000
-        if result is None:
-            raise AssertionError(f"Known key not found: {key}")
-        return elapsed_ms
+    # Partition work into bounded batches. Each task owns and closes its SQLite
+    # connections in the SAME thread; never close worker connections in main.
+    def run_batch(batch):
+        durations = []
+        with HistoryStore(root, snapshot_id, verify=True) as store:
+            for key, mode in batch:
+                start_ns = time.perf_counter_ns()
+                result = store.get(key, mode=mode)
+                elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
+                if result is None:
+                    raise AssertionError(f"Known key not found: {key}")
+                durations.append(elapsed_ms)
+        return durations
 
     results = {}
-    try:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            for mode in ("indexed_exact", "sharded_exact", "sharded_bloom"):
-                queries = [(key, mode) for _ in range(repeats) for key in keys]
-                start = time.perf_counter()
-                durations = list(pool.map(worker, queries))
-                wall = time.perf_counter() - start
-                results[mode] = {
-                    "requests": len(queries),
-                    "p50_ms": percentile(durations, 50),
-                    "p95_ms": percentile(durations, 95),
-                    "p99_ms": percentile(durations, 99),
-                    "mean_ms": statistics.mean(durations),
-                    "throughput_rps": len(queries) / wall,
-                    "wall_seconds": wall,
-                }
-    finally:
-        for store in opened:
-            store.close()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for mode in ("indexed_exact", "sharded_exact", "sharded_bloom"):
+            queries = [(key, mode) for _ in range(repeats) for key in keys]
+            # Exactly one batch per worker (including workers > request count).
+            batch_size = max(1, (len(queries) + workers - 1) // workers)
+            batches = [queries[i:i + batch_size] for i in range(0, len(queries), batch_size)]
+            start = time.perf_counter()
+            durations = [ms for group in pool.map(run_batch, batches) for ms in group]
+            wall = time.perf_counter() - start
+            results[mode] = {
+                "requests": len(queries),
+                "p50_ms": percentile(durations, 50),
+                "p95_ms": percentile(durations, 95),
+                "p99_ms": percentile(durations, 99),
+                "mean_ms": statistics.mean(durations),
+                "throughput_rps": len(queries) / wall,
+                "wall_seconds": wall,
+            }
 
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     # macOS ru_maxrss is bytes; Linux is KiB.
@@ -99,7 +91,7 @@ def benchmark(root, snapshot_id, *, workers=8, repeats=5, max_keys=0):
         "benchmark_type": "local_warm_cache_read_only_threads",
         "limitations": [
             "No network/API transport measured",
-            "Worker initialization is excluded from timed request latency",
+            "Connection startup and validation excluded from per-request latency, included in throughput wall time",
             "Only known keys; missing-key workload not included",
             "OS cache is not cleared; no cold-cache guarantee",
             "RSS is process high-water mark, not per-request allocation",
