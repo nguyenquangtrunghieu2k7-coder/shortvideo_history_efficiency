@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+from collections import Counter
 import http.client
 import json
 import os
@@ -63,23 +64,33 @@ def run(root, secret, token, *, port=8765, workers=8, sample=0):
 
     def check(job):
         key, k, status, target = job
-        start = time.perf_counter()
+        started = time.perf_counter()
         try:
             actual_status, data = _fetch(port, token, key, k)
-            ok = actual_status == status and (
-                (status == 200 and data.get("history") == target and data.get("key") == key)
-                or (status == 404 and data.get("error") == "history_not_found")
-            )
-            return ok, (time.perf_counter() - start) * 1000
-        except Exception:
-            return False, (time.perf_counter() - start) * 1000
+            if actual_status != status:
+                reason = "http_status_" + str(actual_status) + "_expected_" + str(status)
+            elif status == 200 and data.get("history") != target:
+                reason = "payload_mismatch"
+            elif status == 200 and data.get("key") != key:
+                reason = "key_mismatch"
+            elif status == 404 and data.get("error") != "history_not_found":
+                reason = "missing_error_contract"
+            else:
+                reason = "ok"
+        except Exception as exc:
+            # Exception class only, never the message (could contain URLs/keys).
+            reason = "exception_" + type(exc).__name__
+        return reason, (time.perf_counter() - started) * 1000, str(k) if k == "Full" else ("zero" if k == 0 else "positive"), status
 
     start = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         outcomes = list(pool.map(check, jobs))
     elapsed = time.perf_counter() - start
-    latencies = sorted(ms for _, ms in outcomes)
-    failures = sum(not ok for ok, _ in outcomes)
+    latencies = sorted(ms for _, ms, _, _ in outcomes)
+    failure_types = Counter(reason for reason, _, _, _ in outcomes if reason != 'ok')
+    failure_by_k = Counter(kind for reason, _, kind, _ in outcomes if reason != 'ok')
+    failure_by_expected_status = Counter(str(status) for reason, _, _, status in outcomes if reason != 'ok')
+    failures = sum(failure_types.values())
     n = len(latencies)
     return {
         "status": "PASS" if failures == 0 else "FAIL",
@@ -88,13 +99,16 @@ def run(root, secret, token, *, port=8765, workers=8, sample=0):
         "tested_records": len(keys),
         "requests": n,
         "failures": failures,
+        "failure_types": dict(sorted(failure_types.items())),
+        "failure_by_k": dict(sorted(failure_by_k.items())),
+        "failure_by_expected_status": dict(sorted(failure_by_expected_status.items())),
         "workers": workers,
         "wall_seconds": round(elapsed, 4),
         "throughput_rps": round(n / elapsed, 2) if elapsed else None,
         "p50_ms": round(latencies[int((n - 1) * .50)], 3),
         "p95_ms": round(latencies[int((n - 1) * .95)], 3),
         "p99_ms": round(latencies[int((n - 1) * .99)], 3),
-        "benchmark_type": "loopback_http_verified_snapshot_per_request",
+        "benchmark_type": "loopback_http_pinned_verified_snapshot",
     }
 
 
