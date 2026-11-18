@@ -96,11 +96,18 @@ def make_handler(root, hmac_key, api_token):
     return Handler
 
 
+class HistoryHTTPServer(ThreadingHTTPServer):
+    """Larger accept queue for short-lived concurrent loopback requests."""
+    request_queue_size = 128
+    daemon_threads = True
+    block_on_close = False
+
+
 def create_server(root, hmac_key, api_token, host="127.0.0.1", port=8765):
     if host not in ("127.0.0.1", "::1"):
         raise ValueError("M2.3E preview only binds to loopback")
     handler = make_handler(Path(root), hmac_key, api_token)
-    return ThreadingHTTPServer((host, port), handler)
+    return HistoryHTTPServer((host, port), handler)
 
 
 def main():
