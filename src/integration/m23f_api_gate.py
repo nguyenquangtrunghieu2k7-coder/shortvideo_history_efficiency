@@ -77,6 +77,10 @@ def run(root, secret, token, *, port=8765, workers=8, sample=0):
                 reason = "missing_error_contract"
             else:
                 reason = "ok"
+        except OSError as exc:
+            # errno is safe metadata; messages may expose request URLs or keys.
+            code = str(exc.errno) if exc.errno is not None else "none"
+            reason = "exception_" + type(exc).__name__ + "_errno_" + code
         except Exception as exc:
             # Exception class only, never the message (could contain URLs/keys).
             reason = "exception_" + type(exc).__name__
