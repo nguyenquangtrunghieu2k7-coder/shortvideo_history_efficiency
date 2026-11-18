@@ -35,6 +35,7 @@ def make_handler(root, hmac_key, api_token):
     class Handler(BaseHTTPRequestHandler):
         server_version = "HistoryAPI/0.1"
         sys_version = ""
+        protocol_version = "HTTP/1.1"
 
         def _reply(self, status, data):
             body = json.dumps(data, separators=(",", ":")).encode("utf-8")
