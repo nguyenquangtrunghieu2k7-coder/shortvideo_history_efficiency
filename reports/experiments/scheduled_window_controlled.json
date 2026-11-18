@@ -1,0 +1,88 @@
+{
+  "status": "DIAGNOSTIC_COMPLETE_CASE",
+  "n_all": 6455,
+  "n_complete_case": 5254,
+  "complete_case_fraction": 0.8139426800929512,
+  "n_complete_case_users": 799,
+  "oov_requests_by_scenario": {
+    "S0": 1201,
+    "S1": 832,
+    "S2": 575,
+    "S3": 421
+  },
+  "oov_raw_capped_occurrences_by_scenario": {
+    "S0": 71234,
+    "S1": 29689,
+    "S2": 15181,
+    "S3": 8899
+  },
+  "metrics": [
+    {
+      "scenario": "S0",
+      "stride_hours": 24,
+      "full_cohort_auc_oov_excluded": 0.5695743874715837,
+      "complete_case_auc": 0.5805444536959941,
+      "complete_case_selected_interactions": 2015217,
+      "complete_case_full_interactions": 2714247,
+      "complete_case_mean_refresh_age_hours": 12.89877914488432,
+      "batch_workload_capped_interactions_all_observed_jobs": 1431056,
+      "model_inference_seconds": 1.0671599610941485
+    },
+    {
+      "scenario": "S1",
+      "stride_hours": 12,
+      "full_cohort_auc_oov_excluded": 0.5903514144986107,
+      "complete_case_auc": 0.5951792487741696,
+      "complete_case_selected_interactions": 2080290,
+      "complete_case_full_interactions": 2782567,
+      "complete_case_mean_refresh_age_hours": 6.172475376327031,
+      "batch_workload_capped_interactions_all_observed_jobs": 1762749,
+      "model_inference_seconds": 0.5370450840564445
+    },
+    {
+      "scenario": "S2",
+      "stride_hours": 6,
+      "full_cohort_auc_oov_excluded": 0.5960862907299823,
+      "complete_case_auc": 0.6047985475067074,
+      "complete_case_selected_interactions": 2132041,
+      "complete_case_full_interactions": 2832049,
+      "complete_case_mean_refresh_age_hours": 3.0011773177050287,
+      "batch_workload_capped_interactions_all_observed_jobs": 1979292,
+      "model_inference_seconds": 0.42994370916858315
+    },
+    {
+      "scenario": "S3",
+      "stride_hours": 3,
+      "full_cohort_auc_oov_excluded": 0.5892599141197272,
+      "complete_case_auc": 0.5979320473679343,
+      "complete_case_selected_interactions": 2200521,
+      "complete_case_full_interactions": 2870835,
+      "complete_case_mean_refresh_age_hours": 1.5200201041534491,
+      "batch_workload_capped_interactions_all_observed_jobs": 2179969,
+      "model_inference_seconds": 0.48757546104025096
+    }
+  ],
+  "paired_user_cluster_bootstrap_95_ci": {
+    "S1_minus_S0": {
+      "lower_95": -0.002884802120708057,
+      "upper_95": 0.03150168811752328,
+      "valid_replicates": 400
+    },
+    "S2_minus_S0": {
+      "lower_95": 0.004633890557607662,
+      "upper_95": 0.04560892538570108,
+      "valid_replicates": 400
+    },
+    "S3_minus_S0": {
+      "lower_95": -0.0020167390082961043,
+      "upper_95": 0.03919073485760517,
+      "valid_replicates": 400
+    }
+  },
+  "limitations": [
+    "Complete-case restriction selects a different evaluation population; not a replacement for the 6455-request primary cohort.",
+    "Full-cohort scores use OOV exclusion; may confound refresh effect with vocabulary coverage.",
+    "Observed refresh-job workload is not a per-request complete-case compute cost.",
+    "No new model training or policy tuning on held-out test."
+  ]
+}
