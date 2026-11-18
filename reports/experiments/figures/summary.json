@@ -1,0 +1,18 @@
+{
+  "status": "DIAGNOSTIC_NOT_FINAL",
+  "pareto_non_dominated": [
+    "S0",
+    "S1",
+    "S2"
+  ],
+  "pareto_dominated": [
+    "S3"
+  ],
+  "complete_case_n": 5254,
+  "caveats": [
+    "Full-cohort OOV handling changes histories",
+    "Complete-case population is selected, not the full test population",
+    "Workload is an observed-job interaction proxy, not measured CPU/GPU cost",
+    "No prospective SLA or production resource measurement"
+  ]
+}
