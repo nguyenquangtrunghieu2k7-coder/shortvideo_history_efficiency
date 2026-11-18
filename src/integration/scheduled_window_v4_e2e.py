@@ -84,6 +84,8 @@ def run(args):
     if len(set(labels.tolist()))!=2: raise ValueError("AUC requires both classes")
     all_events = pd.read_parquet(args.events,columns=["evaluation_id","user_id","time_ms","long_view"])
     if not all_events.evaluation_id.is_unique: raise ValueError("Duplicate event IDs")
+    missing = sorted(set(map(int,dataset.evaluation_ids)) - set(map(int,all_events.evaluation_id)))
+    if missing: raise RuntimeError(f"Missing {len(missing)} test evaluation IDs from event source; examples: {missing[:10]}. Use data/processed/evaluation_events.parquet.")
     events = all_events.set_index("evaluation_id").loc[dataset.evaluation_ids].reset_index()
     if list(map(int,events.user_id))!=list(map(int,dataset.user_ids)) or list(map(int,events.long_view))!=list(map(int,labels)):
         raise AssertionError("Event alignment failed")
@@ -129,7 +131,7 @@ def run(args):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--events",type=Path,default=e2e.ROOT/"data/processed/splits/KFull/test.parquet")
+    p.add_argument("--events",type=Path,default=e2e.ROOT/"data/processed/evaluation_events.parquet")
     p.add_argument("--standard-files",type=Path,nargs="+",default=STANDARD)
     p.add_argument("--refresh-local-hour",type=int,default=2)
     p.add_argument("--utc-offset-hours",type=int,default=7)
