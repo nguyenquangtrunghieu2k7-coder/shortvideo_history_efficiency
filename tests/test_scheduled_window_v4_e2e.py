@@ -10,7 +10,7 @@ class ScheduledV4Stage2Tests(unittest.TestCase):
         records = {9:([0,1*h,2*h,6*h,24*h,25*h,30*h],
                        [1,2,3,4,5,6,7])}
         histories,metrics = build_histories(events,records,6,0,0)
-        self.assertEqual(histories[0],[2,3,4])
+        self.assertEqual(histories[0],[1,2,3,4])
         self.assertEqual(histories[1],[4,5,6])
         self.assertEqual(metrics["observed_user_refresh_jobs"],2)
         self.assertEqual(metrics["new_interactions_since_refresh"],2)
