@@ -19,15 +19,12 @@ from urllib.parse import urlencode
 from src.integration.m23_activation import open_active
 
 
-def _fetch(port, token, key, k):
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
-    try:
-        conn.request("GET", "/history?" + urlencode({"key": key, "k": k}),
-                     headers={"Authorization": "Bearer " + token})
-        resp = conn.getresponse()
-        return resp.status, json.loads(resp.read())
-    finally:
-        conn.close()
+def _fetch(conn, token, key, k):
+    """One request over a worker-owned persistent HTTP/1.1 connection."""
+    conn.request("GET", "/history?" + urlencode({"key": key, "k": k}),
+                 headers={"Authorization": "Bearer " + token})
+    resp = conn.getresponse()
+    return resp.status, json.loads(resp.read())
 
 
 def run(root, secret, token, *, port=8765, workers=8, sample=0):
@@ -62,11 +59,11 @@ def run(root, secret, token, *, port=8765, workers=8, sample=0):
             jobs.append((missing, 5, 404, None))
     random.Random(917).shuffle(jobs)
 
-    def check(job):
+    def check(conn, job):
         key, k, status, target = job
         started = time.perf_counter()
         try:
-            actual_status, data = _fetch(port, token, key, k)
+            actual_status, data = _fetch(conn, token, key, k)
             if actual_status != status:
                 reason = "http_status_" + str(actual_status) + "_expected_" + str(status)
             elif status == 200 and data.get("history") != target:
@@ -86,9 +83,20 @@ def run(root, secret, token, *, port=8765, workers=8, sample=0):
             reason = "exception_" + type(exc).__name__
         return reason, (time.perf_counter() - started) * 1000, str(k) if k == "Full" else ("zero" if k == 0 else "positive"), status
 
+    # One persistent TCP connection per worker. Avoid ephemeral-port exhaustion
+    # from tens of thousands of short-lived connections on macOS.
+    buckets = [jobs[i::workers] for i in range(workers)]
+
+    def run_bucket(batch):
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=30)
+        try:
+            return [check(conn, job) for job in batch]
+        finally:
+            conn.close()
+
     start = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-        outcomes = list(pool.map(check, jobs))
+        outcomes = [result for batch in pool.map(run_bucket, buckets) for result in batch]
     elapsed = time.perf_counter() - start
     latencies = sorted(ms for _, ms, _, _ in outcomes)
     failure_types = Counter(reason for reason, _, _, _ in outcomes if reason != 'ok')
@@ -112,7 +120,8 @@ def run(root, secret, token, *, port=8765, workers=8, sample=0):
         "p50_ms": round(latencies[int((n - 1) * .50)], 3),
         "p95_ms": round(latencies[int((n - 1) * .95)], 3),
         "p99_ms": round(latencies[int((n - 1) * .99)], 3),
-        "benchmark_type": "loopback_http_pinned_verified_snapshot",
+        "benchmark_type": "loopback_http_pinned_verified_snapshot_keepalive",
+        "connection_mode": "persistent_http11_per_worker",
     }
 
 
