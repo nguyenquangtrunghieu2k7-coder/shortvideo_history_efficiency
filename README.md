@@ -17,7 +17,7 @@ This repository studies how to reduce the amount of user behavioral history proc
 - [x] Synthetic Bloom benchmark and local KuaiRand membership/join benchmarks
 - [x] Offline local end-to-end V4 decisions + Bloom-assisted exact history retrieval + frozen recommender (`src/integration/e2e_v4_bloom.py`)
 - [x] Local authenticated HTTP/1.1 persistent SQLite snapshot retrieval (M2.3); stability evidence gate PASS (3 × 32,920 requests, 0 failures)
-- [ ] HTTP history retrieval wired into frozen V4 recommender inference and independently validated
+- [ ] HTTP → frozen V4 inference parity: runner implemented (`src/integration/m23h_http_v4_e2e.py`), awaiting local full-data PASS
 - [ ] Real distributed execution / BLOOM-FaaS deployment
 - [ ] Cloud cost, energy, and production serving-latency evaluation
 
@@ -30,6 +30,14 @@ The local project has **two independently verified tracks**, not yet a single ve
 1. **Offline V4 + Bloom + frozen recommender E2E:** `src/integration/e2e_v4_bloom.py` loads the frozen V4 policy and K-specific recommender checkpoints, builds in-memory sharded Bloom indexes over evaluation IDs, compares Bloom-assisted exact lookup to non-Bloom exact lookup, selects K, runs recommender inference, and reports AUC/history saving. Earlier real-data evaluation recorded V4 AUC **0.5968776837585248** and history saving **0.23844878810882886**, with retrieval equivalence and zero Bloom false negatives. This is an offline in-memory integration, **not an HTTP retrieval integration**.
 
 2. **M2.3 local snapshot/HTTP retrieval:** `src/integration/m23_persistent_store.py`, `m23_activation.py`, and `m23_local_api.py` implement integrity-checked immutable SQLite snapshots, signed activation, pinned loopback API, and persistent HTTP/1.1 connections. The independent full-data gate (`m23f_api_gate.py`) checked all **6,455** records and **32,920** requests per run. Three consecutive keep-alive runs yielded **98,760 requests, zero failures**, and `m23g_release_gate.py` reported **PASS** with 10/10 checks. The local test run reported **28/28 tests PASS**. Snapshot ID: `0e43ec79835648358b09b304ec3596cd`. These are user-run macOS loopback results, not cloud/production claims.
+
+**New M2.3H runner (implemented; local execution pending):** `src/integration/m23h_http_v4_e2e.py` requests the frozen V4-selected K over the authenticated M2.3 HTTP API, checks each selected history against the original offline source, runs frozen K-specific recommender inference on both paths, and compares predictions/AUC. It does **not** measure a single V4 + Bloom + HTTP combined request path; Bloom correctness remains independently covered by the offline E2E gate. The API must be running and `M23_API_TOKEN` exported locally.
+
+```bash
+PYTHONPATH=. python -m src.integration.m23h_http_v4_e2e \
+  --snapshot-id 0e43ec79835648358b09b304ec3596cd \
+  --output reports/m23h_http_v4_e2e.json
+```
 
 **Outstanding integration acceptance:** Wire M2.3 HTTP history retrieval into the *actual* frozen V4 inference path, compare its selected histories and predictions against the existing offline exact path, and record AUC, history saving, Bloom false negatives, and request-level equivalence in one local E2E report. Do not infer this acceptance from the separate gates above. Frozen policy/checkpoints must not be retrained.
 
