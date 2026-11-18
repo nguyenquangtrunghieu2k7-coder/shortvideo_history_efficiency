@@ -7,11 +7,15 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import sys
 from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import DataLoader,Dataset
 from sklearn.metrics import roc_auc_score
+# Legacy train_baseline imports baseline_models as a top-level module.
+# Expose its own directory without modifying frozen baseline source.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'models'))
 from src.models import train_baseline as base
 
 ROOT=base.ROOT
