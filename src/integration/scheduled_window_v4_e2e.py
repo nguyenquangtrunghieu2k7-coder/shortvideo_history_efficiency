@@ -17,16 +17,25 @@ from src.policy.adaptive_v4_policy import K_VALUES, apply_selected_policy_from_l
 def read_logs(paths, users, lower, upper, vocab):
     out = defaultdict(list)
     seq = 0
+    oov_rows = 0
+    oov_ids = set()
     for path in paths:
         for chunk in pd.read_csv(path, usecols=["user_id","video_id","time_ms"], chunksize=250000):
             chunk = chunk.loc[chunk.user_id.isin(users) & (chunk.time_ms >= lower) & (chunk.time_ms < upper)]
             for user, raw, t in chunk[["user_id","video_id","time_ms"]].itertuples(index=False,name=None):
                 idx = vocab.get(int(raw))
                 if idx is None:
-                    raise RuntimeError(f"Unknown video in frozen vocabulary: {raw}")
+                    # The frozen embedding has no UNK token. Do not mutate vocabulary
+                    # or map unseen videos to padding (0). Exclude with explicit audit.
+                    oov_rows += 1
+                    oov_ids.add(int(raw))
+                    continue
                 out[int(user)].append((int(t),seq,int(idx)+1))
                 seq += 1
-    return {u:([v[0] for v in sorted(vals)],[v[2] for v in sorted(vals)]) for u,vals in out.items()}
+    mapped = {u:([v[0] for v in sorted(vals)],[v[2] for v in sorted(vals)]) for u,vals in out.items()}
+    return mapped, {"excluded_oov_interaction_rows":oov_rows,
+                    "excluded_oov_unique_video_ids":len(oov_ids),
+                    "excluded_oov_video_id_examples":sorted(oov_ids)[:10]}
 
 def build_histories(events, records, stride, hour, offset):
     cache = {}
@@ -94,7 +103,8 @@ def run(args):
     if not policy.get("policy_frozen_after_validation_tuning") or policy["k_values"]!=K_VALUES or policy["feature_names"]!=FEATURE_NAMES:
         raise ValueError("Frozen V4 schema mismatch")
     lower = min(last_refresh(int(events.time_ms.min()),s,args.refresh_local_hour,args.utc_offset_hours) for s in (24,12,6,3))-DAY
-    records = read_logs(args.standard_files,set(map(int,events.user_id)),lower,int(events.time_ms.max()),vocab_map)
+    records,oov_audit = read_logs(args.standard_files,set(map(int,events.user_id)),lower,int(events.time_ms.max()),vocab_map)
+    print("Frozen vocabulary audit:", json.dumps(oov_audit), flush=True)
     rows = []
     for i,stride in enumerate((24,12,6,3)):
         tick = perf_counter()
@@ -119,11 +129,13 @@ def run(args):
         row["auc_delta_vs_S0"]=row["auc"]-rows[0]["auc"]
         row["batch_workload_ratio_vs_S0"]=row["batch_workload_capped_interactions"]/max(rows[0]["batch_workload_capped_interactions"],1)
     report={"status":"PASS","gate":"SCHEDULED_REFRESH_FROZEN_V4_E2E","n_events":len(events),
-            "device":str(device),"scenarios":rows,"wall_seconds":perf_counter()-start,
+            "device":str(device),"frozen_vocab_oov_audit":oov_audit,
+            "scenarios":rows,"wall_seconds":perf_counter()-start,
             "limitations":["Frozen V4 and K checkpoints trained on event-time histories; distribution shift.",
             "Observed user-refresh jobs only, not full production scheduling.",
             "Offline local inference timing, not HTTP serving latency.",
             "Do not interpret raw interaction overlap as recommendation accuracy.",
+            "Unseen history videos are excluded rather than extending frozen embeddings or using padding as UNK; OOV counts are audited.",
             "No retraining; AUC on same held-out requests, not a proof of optimality."]}
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(report,indent=2)+"\n")
