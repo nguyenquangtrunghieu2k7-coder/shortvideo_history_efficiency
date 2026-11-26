@@ -1,0 +1,84 @@
+{
+  "status": "EXECUTION_PASS",
+  "quality_targets": {
+    "full_test": true,
+    "mean_read_tokens_le_50": true,
+    "point_auc_margin": true,
+    "noninferiority_ci": true,
+    "adaptive_auc_ge_fixed50": false,
+    "p95_within_20pct_fixed50": true,
+    "bloom_prediction_parity": true
+  },
+  "selected_on_validation": "behavior",
+  "selection_reason": "maximum mean validation AUC across seven predeclared policy configurations",
+  "adaptive_vs_full": {
+    "delta_auc": -0.0048351856529426085,
+    "read_token_reduction": 0.9717537341573903,
+    "linear_mac_reduction": 0.9658306875113618
+  },
+  "adaptive_vs_fixed50": {
+    "delta_auc": -0.004047739328113087,
+    "p95_ratio": 0.9838839645036346
+  },
+  "index_comparison": [
+    {
+      "encoding": "float32",
+      "bytes": 181629650,
+      "bundle_sha256": "7ecf6ca6b10f09d0955c58c365df86a3b628445fa67f2b8f053b1e3b1cb2bdee",
+      "prepare_seconds": 13.329705875134096
+    },
+    {
+      "encoding": "int8",
+      "bytes": 153780948,
+      "bundle_sha256": "da282fc0800a3ec31c80d022befff1716756e239f17c71bf446ef7fd0b5dbe8c",
+      "prepare_seconds": 13.954682416981086
+    }
+  ],
+  "scope": "local HTTP; existing frozen disjoint history dataset; test reused for exploratory M4 assessment",
+  "unfinished": [
+    "point-in-time content metadata provenance and model integration",
+    "dynamic micro-batching",
+    "open-loop burst and cold-start workload",
+    "physical disk IO and complete FLOPs accounting"
+  ],
+  "environment": {
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "device": "mps",
+    "cpu_count": 12,
+    "torch_version": "2.15.0",
+    "scope": "local loopback; no cloud claims"
+  },
+  "shared_weights": [
+    {
+      "strategy": "independent",
+      "checkpoints": 2,
+      "checkpoint_bytes": 487990584,
+      "tensor_bytes_if_all_resident": 487976232,
+      "training_seconds": 91.38576020812616
+    },
+    {
+      "strategy": "full_only",
+      "checkpoints": 1,
+      "checkpoint_bytes": 243995317,
+      "tensor_bytes_if_all_resident": 243988116,
+      "training_seconds": 60.63750416599214
+    },
+    {
+      "strategy": "shared",
+      "checkpoints": 1,
+      "checkpoint_bytes": 243995459,
+      "tensor_bytes_if_all_resident": 243988116,
+      "training_seconds": 67.635896041058
+    }
+  ],
+  "lazy_vs_eager": {
+    "mean_read_tokens": 0.028246265842609666,
+    "p95_ms": 0.8510647247942571,
+    "cpu_seconds": 0.9202216357004648
+  },
+  "fused_vs_pipeline": {
+    "mean_selector_ms": 0.3485615523452719,
+    "p95_ms": 0.9260298604965141,
+    "cpu_seconds": 0.8931385847624611
+  }
+}

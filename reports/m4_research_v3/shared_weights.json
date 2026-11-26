@@ -1,0 +1,128 @@
+{
+  "rows": [
+    {
+      "training": "shared",
+      "k": 50,
+      "auc": 0.7070996463753474,
+      "gauc": 0.5777795922842637,
+      "logloss": 0.26872595674574923,
+      "offline_batch_scoring_seconds": 0.3531785421073437,
+      "checkpoint_bytes": 243995459,
+      "trainable_parameters": 1212229,
+      "total_tensor_bytes": 243988116,
+      "delta_auc_vs_specialist": 0.001501641828744682,
+      "ci95_vs_specialist": [
+        -0.002191160283454477,
+        0.005781836558798064
+      ]
+    },
+    {
+      "training": "shared",
+      "k": 2048,
+      "auc": 0.7078870927001768,
+      "gauc": 0.5795790011387056,
+      "logloss": 0.2679937798889638,
+      "offline_batch_scoring_seconds": 0.8537474998738617,
+      "checkpoint_bytes": 243995459,
+      "trainable_parameters": 1212229,
+      "total_tensor_bytes": 243988116,
+      "delta_auc_vs_specialist": -0.0018331649406415629,
+      "ci95_vs_specialist": [
+        -0.0061938419110766476,
+        0.002223496413078534
+      ]
+    },
+    {
+      "training": "fixed_50",
+      "k": 50,
+      "auc": 0.7055980045466027,
+      "gauc": 0.5776101772005661,
+      "logloss": 0.26784737173480255,
+      "offline_batch_scoring_seconds": 0.3035890001337975,
+      "checkpoint_bytes": 243995267,
+      "trainable_parameters": 1212229,
+      "total_tensor_bytes": 243988116,
+      "delta_auc_vs_specialist": 0.0,
+      "ci95_vs_specialist": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "training": "fixed_50",
+      "k": 2048,
+      "auc": 0.7068549507451377,
+      "gauc": 0.5796152256841184,
+      "logloss": 0.266801077320845,
+      "offline_batch_scoring_seconds": 0.8190862920600921,
+      "checkpoint_bytes": 243995267,
+      "trainable_parameters": 1212229,
+      "total_tensor_bytes": 243988116,
+      "delta_auc_vs_specialist": -0.0028653068956806527,
+      "ci95_vs_specialist": [
+        -0.006944336675611162,
+        0.0009056561133447385
+      ]
+    },
+    {
+      "training": "fixed_2048",
+      "k": 50,
+      "auc": 0.697729382419803,
+      "gauc": 0.5463522034591393,
+      "logloss": 0.2767746802701359,
+      "offline_batch_scoring_seconds": 0.30507100000977516,
+      "checkpoint_bytes": 243995317,
+      "trainable_parameters": 1212229,
+      "total_tensor_bytes": 243988116,
+      "delta_auc_vs_specialist": -0.00786862212679973,
+      "ci95_vs_specialist": [
+        -0.013293311855105072,
+        -0.002932966902374689
+      ]
+    },
+    {
+      "training": "fixed_2048",
+      "k": 2048,
+      "auc": 0.7097202576408184,
+      "gauc": 0.5832329359517104,
+      "logloss": 0.26777626595689574,
+      "offline_batch_scoring_seconds": 0.8218425838276744,
+      "checkpoint_bytes": 243995317,
+      "trainable_parameters": 1212229,
+      "total_tensor_bytes": 243988116,
+      "delta_auc_vs_specialist": 0.0,
+      "ci95_vs_specialist": [
+        0.0,
+        0.0
+      ]
+    }
+  ],
+  "deployments": [
+    {
+      "strategy": "independent",
+      "checkpoints": 2,
+      "checkpoint_bytes": 487990584,
+      "tensor_bytes_if_all_resident": 487976232,
+      "training_seconds": 91.38576020812616
+    },
+    {
+      "strategy": "full_only",
+      "checkpoints": 1,
+      "checkpoint_bytes": 243995317,
+      "tensor_bytes_if_all_resident": 243988116,
+      "training_seconds": 60.63750416599214
+    },
+    {
+      "strategy": "shared",
+      "checkpoints": 1,
+      "checkpoint_bytes": 243995459,
+      "tensor_bytes_if_all_resident": 243988116,
+      "training_seconds": 67.635896041058
+    }
+  ],
+  "notes": [
+    "Matched architecture; fixed models use the same frozen behavioral vectors if selected.",
+    "Training times exclude prior shared representation search for specialists; shared time may include pretraining.",
+    "Tensor footprint is not process peak RAM; offline scoring time is not HTTP latency."
+  ]
+}
