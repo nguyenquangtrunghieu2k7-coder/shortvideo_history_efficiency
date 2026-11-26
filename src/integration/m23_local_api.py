@@ -6,6 +6,7 @@ Snapshot verified at startup, pinned until restart; read-only SQLite per request
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import hmac
 import hashlib
 import sqlite3
@@ -96,7 +97,7 @@ def make_handler(root, hmac_key, api_token, retrieval_mode="indexed_bloom"):
                                 continue
                     db = snapshot_dir / f"shard_{i}.sqlite"
                     lookups += 1
-                    with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True) as conn:
+                    with closing(sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
                         row = conn.execute("SELECT payload FROM histories WHERE key=?", (key,)).fetchone()
                     if row is None:
                         if retrieval_mode.endswith("bloom") and bloom is not None:
