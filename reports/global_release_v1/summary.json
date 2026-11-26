@@ -1,0 +1,21 @@
+{
+  "status": "NATIVE_PASS",
+  "docker_verified": false,
+  "checkpoint_sha256": "92e5b1da3385295b650eea592bb1e0107a9a17bb554c050eec8232b6a42c3449",
+  "snapshot_id": "b69bcdb96caf49bab627a1ce580c002c",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "device": "mps",
+  "git_commit": "4308959afb102c759a625ed6408e7bd474a7235d",
+  "test_requests": 6455,
+  "http_requests": 7680,
+  "gates": {
+    "parity": true,
+    "single_lookup": true,
+    "policy_reload": true,
+    "invalid_policy_fallback": true,
+    "authorization": true,
+    "override_rejection": true,
+    "hard_caps": true
+  },
+  "scope": "Local native HTTP; cached test quality; no retraining; not production certification"
+}
