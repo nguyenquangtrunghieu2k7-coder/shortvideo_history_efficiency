@@ -1,0 +1,70 @@
+{
+  "status": "EXPLORATORY_NOT_PRODUCTION_DECISION",
+  "objective_1": "maximize held-out AUC",
+  "objective_2": "minimize selected history interactions per request",
+  "objective_3": "minimize observed refresh batch workload proxy",
+  "non_dominated_3objective": [
+    "S0:Fixed-0",
+    "S0:Fixed-100",
+    "S0:Fixed-Full",
+    "S1:Fixed-100",
+    "S1:Fixed-Full",
+    "S1:Adaptive-V4",
+    "S2:Fixed-100",
+    "S2:Adaptive-V4"
+  ],
+  "threshold_scenarios_illustrative_not_prespecified": [
+    {
+      "auc_floor": 0.58,
+      "selection_rule": "minimize refresh workload, then history, subject to AUC floor",
+      "scenario": "S0",
+      "policy": "Fixed-0",
+      "auc": 0.584472430382089,
+      "mean_history": 0.0,
+      "refresh_workload_ratio": 1.0
+    },
+    {
+      "auc_floor": 0.59,
+      "selection_rule": "minimize refresh workload, then history, subject to AUC floor",
+      "scenario": "S0",
+      "policy": "Fixed-Full",
+      "auc": 0.6066828568785272,
+      "mean_history": 516.6058241339931,
+      "refresh_workload_ratio": 1.0
+    },
+    {
+      "auc_floor": 0.6,
+      "selection_rule": "minimize refresh workload, then history, subject to AUC floor",
+      "scenario": "S0",
+      "policy": "Fixed-Full",
+      "auc": 0.6066828568785272,
+      "mean_history": 516.6058241339931,
+      "refresh_workload_ratio": 1.0
+    },
+    {
+      "auc_floor": 0.61,
+      "selection_rule": "minimize refresh workload, then history, subject to AUC floor",
+      "scenario": "S1",
+      "policy": "Fixed-Full",
+      "auc": 0.6216365991303543,
+      "mean_history": 529.6092500951656,
+      "refresh_workload_ratio": 1.2317819847720843
+    },
+    {
+      "auc_floor": 0.62,
+      "selection_rule": "minimize refresh workload, then history, subject to AUC floor",
+      "scenario": "S1",
+      "policy": "Fixed-Full",
+      "auc": 0.6216365991303543,
+      "mean_history": 529.6092500951656,
+      "refresh_workload_ratio": 1.2317819847720843
+    }
+  ],
+  "limitations": [
+    "AUC floors were selected for illustration after test inspection; not prospective decision thresholds.",
+    "Refresh workload measured on all observed jobs, AUC/history on common OOV-free cohort.",
+    "No production CPU, RAM, latency, energy or financial costs measured.",
+    "Point-estimate Pareto is not statistical Pareto; confidence intervals needed.",
+    "Zero-history Fixed-0 still incurs an unnecessary refresh workload in this schedule-level model; production would avoid refresh entirely."
+  ]
+}

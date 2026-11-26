@@ -1,0 +1,4 @@
+strategy,checkpoints,checkpoint_bytes,tensor_bytes_if_all_resident,training_seconds
+independent,2,487990584,487976232,91.38576020812616
+full_only,1,243995317,243988116,60.63750416599214
+shared,1,243995459,243988116,67.635896041058

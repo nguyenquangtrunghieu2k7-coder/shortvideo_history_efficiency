@@ -1,0 +1,50 @@
+{
+  "status": "PASS",
+  "raw_rows_scanned": 6356629,
+  "frozen_vocab_size": 1868274,
+  "event_time_reconstruction_parity": {
+    "event_time_oov": 0,
+    "matching_requests": 6455,
+    "mismatching_requests": 0
+  },
+  "mismatch_examples": [],
+  "scheduled_windows": [
+    {
+      "stride_hours": 24,
+      "observed_jobs": 3278,
+      "job_window_raw_rows": 1541434,
+      "job_window_oov_rows": 52338,
+      "job_window_oov_rate": 0.03395409728862864,
+      "job_window_oov_capped_rows": 49454,
+      "request_window_oov_capped_rows": 71234
+    },
+    {
+      "stride_hours": 12,
+      "observed_jobs": 3776,
+      "job_window_raw_rows": 1846315,
+      "job_window_oov_rows": 23131,
+      "job_window_oov_rate": 0.012528198059377733,
+      "job_window_oov_capped_rows": 22415,
+      "request_window_oov_capped_rows": 29689
+    },
+    {
+      "stride_hours": 6,
+      "observed_jobs": 4136,
+      "job_window_raw_rows": 2059125,
+      "job_window_oov_rows": 12651,
+      "job_window_oov_rate": 0.006143871790202149,
+      "job_window_oov_capped_rows": 12380,
+      "request_window_oov_capped_rows": 15181
+    },
+    {
+      "stride_hours": 3,
+      "observed_jobs": 4414,
+      "job_window_raw_rows": 2261986,
+      "job_window_oov_rows": 7983,
+      "job_window_oov_rate": 0.0035291995618010013,
+      "job_window_oov_capped_rows": 7678,
+      "request_window_oov_capped_rows": 8899
+    }
+  ],
+  "warning": "Audit does not change frozen artifacts; original Stage2 OOV removal changes window contents and must not be considered baseline-equivalent."
+}

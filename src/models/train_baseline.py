@@ -36,6 +36,7 @@ Final test evaluation:
 """
 
 from pathlib import Path
+import os
 import random
 
 import numpy as np
@@ -56,11 +57,11 @@ from baseline_models import KuaiRandRecommender
 
 ROOT = Path(__file__).resolve().parents[2]
 
-PROCESSED_DIR = ROOT / "data" / "processed"
+PROCESSED_DIR = Path(os.environ.get("SHORTVIDEO_PROCESSED_DIR", ROOT / "data" / "processed")).resolve()
 PHASE7_DIR = PROCESSED_DIR / "phase7"
 
-MODEL_DIR = ROOT / "models"
-RESULT_DIR = PROCESSED_DIR / "phase8"
+MODEL_DIR = Path(os.environ.get("SHORTVIDEO_MODEL_DIR", ROOT / "models"))
+RESULT_DIR = Path(os.environ.get("SHORTVIDEO_RESULT_DIR", PROCESSED_DIR / "phase8"))
 
 MODEL_DIR.mkdir(
     parents=True,
@@ -125,6 +126,9 @@ def set_seed(seed=SEED):
 # =============================================================================
 
 def get_device():
+    forced = os.environ.get("SHORTVIDEO_DEVICE")
+    if forced:
+        return torch.device(forced)
 
     if torch.cuda.is_available():
 

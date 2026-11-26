@@ -2,7 +2,7 @@
 
 > Project 1 — adaptive behavioral-history management and a Bloom-filter pipeline prototype.
 
-**Status snapshot: 2026-10-31**  
+**Status snapshot: 2026-11-18 (local integration and M2.3 release evidence)**  
 **Main adaptive policy: V4 (balanced quality/history utility)**
 
 This repository studies how to reduce the amount of user behavioral history processed by a short-video recommender while controlling recommendation-quality degradation. A separate Bloom-filter prototype investigates distributed candidate filtering, fan-in/OR merging, probe-side membership checks, and parameter calibration.
@@ -15,11 +15,55 @@ This repository studies how to reduce the amount of user behavioral history proc
 - [x] User-disjoint validation roles and leakage audits
 - [x] Bloom Filter implementation, local multi-worker build simulation, OR merge, probe filtering, calibration
 - [x] Synthetic Bloom benchmark and local KuaiRand membership/join benchmarks
-- [ ] End-to-end integration of V4 decisions with the Bloom pipeline
+- [x] Offline local end-to-end V4 decisions + Bloom-assisted exact history retrieval + frozen recommender (`src/integration/e2e_v4_bloom.py`)
+- [x] Local authenticated HTTP/1.1 persistent SQLite snapshot retrieval (M2.3); stability evidence gate PASS (3 × 32,920 requests, 0 failures)
+- [x] HTTP → frozen V4 inference parity: M2.3H full-data local PASS (6,455 requests; zero history mismatches; prediction max abs delta 0)
 - [ ] Real distributed execution / BLOOM-FaaS deployment
 - [ ] Cloud cost, energy, and production serving-latency evaluation
 
 The checkboxes describe the current repository status, not a claim that the complete target architecture has already been deployed.
+
+## Local integration status (2026-11-18)
+
+The local project has **two independently verified tracks**, not yet a single verified HTTP-to-recommender inference path:
+
+1. **Offline V4 + Bloom + frozen recommender E2E:** `src/integration/e2e_v4_bloom.py` loads the frozen V4 policy and K-specific recommender checkpoints, builds in-memory sharded Bloom indexes over evaluation IDs, compares Bloom-assisted exact lookup to non-Bloom exact lookup, selects K, runs recommender inference, and reports AUC/history saving. Earlier real-data evaluation recorded V4 AUC **0.5968776837585248** and history saving **0.23844878810882886**, with retrieval equivalence and zero Bloom false negatives. This is an offline in-memory integration, **not an HTTP retrieval integration**.
+
+2. **M2.3 local snapshot/HTTP retrieval:** `src/integration/m23_persistent_store.py`, `m23_activation.py`, and `m23_local_api.py` implement integrity-checked immutable SQLite snapshots, signed activation, pinned loopback API, and persistent HTTP/1.1 connections. The independent full-data gate (`m23f_api_gate.py`) checked all **6,455** records and **32,920** requests per run. Three consecutive keep-alive runs yielded **98,760 requests, zero failures**, and `m23g_release_gate.py` reported **PASS** with 10/10 checks. The local test run reported **28/28 tests PASS**. Snapshot ID: `0e43ec79835648358b09b304ec3596cd`. These are user-run macOS loopback results, not cloud/production claims.
+
+**M2.3H runner (local full-data PASS):** `src/integration/m23h_http_v4_e2e.py` requests the frozen V4-selected K over the authenticated M2.3 HTTP API, checks each selected history against the original offline source, runs frozen K-specific recommender inference on both paths, and compares predictions/AUC. It does **not** measure a single V4 + Bloom + HTTP combined request path; Bloom correctness remains independently covered by the offline E2E gate. The API must be running and `M23_API_TOKEN` exported locally.
+
+```bash
+PYTHONPATH=. python -m src.integration.m23h_http_v4_e2e \
+  --snapshot-id 0e43ec79835648358b09b304ec3596cd \
+  --output reports/m23h_http_v4_e2e.json
+```
+
+**Accepted local integration:** M2.3H retrieved 6,455 frozen-V4-selected histories via authenticated loopback HTTP; history mismatches = 0, maximum absolute prediction delta = 0.0, and both exact/HTTP AUC = 0.5968776837585248. History saving = 0.23844878810882886 (3,633,082 Full vs 2,766,778 selected interactions). The separately executed offline V4 + Bloom E2E reported retrieval equivalence, zero Bloom false negatives, and 217 Bloom false positives resolved by exact lookup. **Scope boundary:** These are two independently validated local E2E paths; no single combined Bloom + HTTP request-path run or cloud/production serving claim. Frozen policy/checkpoints were not retrained.
+
+### Reproduce M2.3 evidence gate
+
+```bash
+PYTHONPATH=. python -m src.integration.m23g_release_gate \
+  reports/m23g_keepalive_run1.json \
+  reports/m23g_keepalive_run2.json \
+  reports/m23g_keepalive_run3.json \
+  --output reports/m23g_release_gate.json
+```
+
+### Run existing offline E2E (requires local KuaiRand data and frozen artifacts)
+
+```bash
+PYTHONPATH=. python -m src.integration.e2e_v4_bloom \
+  --mode v4 --bloom \
+  --output reports/e2e_v4_bloom_local.json
+```
+
+M2.3 API is **loopback-only** with bearer authentication and HMAC-protected activation; it is not a public service. Keep `M23_API_TOKEN` and `M23_HMAC_KEY_HEX` out of version control.
+
+---
+
+
 
 ---
 
@@ -48,7 +92,7 @@ These mechanisms are complementary but not interchangeable. Bloom rejection rate
 
 ### 2.1 Current research architecture
 
-The repository currently has two experimental tracks: the offline recommendation/adaptive-policy track and the Bloom-filter prototype. The dashed edges below are planned integration points.
+The repository has an offline V4 + Bloom + recommender integration and a separately validated local HTTP snapshot service. The diagram below depicts the original research components; its dashed edges are not evidence of an HTTP-to-recommender integration.
 
 ```mermaid
 flowchart TB
@@ -773,11 +817,11 @@ For reproducibility, record the Git commit/branch, Python and package versions, 
 - [ ] Add direct paired-bootstrap V4-versus-V5 test comparison.
 
 ### B — Define V4/Bloom integration contract
-- [ ] Specify exact identifier set inserted into Bloom filters.
-- [ ] Specify records probed and semantics of MAYBE/NO.
-- [ ] Define how selected K controls history retrieval and downstream records.
-- [ ] Define exact verification after Bloom-positive results.
-- [ ] Verify no false negatives under key normalization and merge.
+- [x] Specify exact identifier set inserted into Bloom filters (evaluation_id in the offline E2E).
+- [x] Specify records probed and semantics of MAYBE/NO in offline E2E.
+- [x] Define how selected K controls history slicing and downstream recommender inference in offline E2E.
+- [x] Define exact verification after Bloom-positive results in offline E2E.
+- [x] Verify no false negatives under offline E2E key normalization and merge.
 
 ### C — Move beyond local simulation
 - [ ] Replace sequential simulation with actual worker processes or distributed tasks.

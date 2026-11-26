@@ -1,0 +1,379 @@
+{
+  "selected_model": "extra_trees",
+  "profiles": [
+    {
+      "name": "q0",
+      "preferences": {
+        "quality_weight": 0.0,
+        "cost_weight": 1.0,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "recent_5"
+    },
+    {
+      "name": "q0.25",
+      "preferences": {
+        "quality_weight": 0.25,
+        "cost_weight": 0.75,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "recent_5"
+    },
+    {
+      "name": "q0.5",
+      "preferences": {
+        "quality_weight": 0.5,
+        "cost_weight": 0.5,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "recent_5"
+    },
+    {
+      "name": "q0.75",
+      "preferences": {
+        "quality_weight": 0.75,
+        "cost_weight": 0.25,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "semantic_5"
+    },
+    {
+      "name": "q0.9",
+      "preferences": {
+        "quality_weight": 0.9,
+        "cost_weight": 0.09999999999999998,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "recent_50"
+    },
+    {
+      "name": "q0.95",
+      "preferences": {
+        "quality_weight": 0.95,
+        "cost_weight": 0.050000000000000044,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "semantic_50"
+    },
+    {
+      "name": "q0.99",
+      "preferences": {
+        "quality_weight": 0.99,
+        "cost_weight": 0.010000000000000009,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "semantic_50"
+    },
+    {
+      "name": "q1",
+      "preferences": {
+        "quality_weight": 1.0,
+        "cost_weight": 0.0,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "semantic_50"
+    },
+    {
+      "name": "q0.9_cap50",
+      "preferences": {
+        "quality_weight": 0.9,
+        "cost_weight": 0.09999999999999998,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 50,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "semantic_20"
+    },
+    {
+      "name": "q0.99_cap128",
+      "preferences": {
+        "quality_weight": 0.99,
+        "cost_weight": 0.010000000000000009,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 128,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "semantic_50"
+    },
+    {
+      "name": "q1_cap50",
+      "preferences": {
+        "quality_weight": 1.0,
+        "cost_weight": 0.0,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 50,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "recent_50"
+    },
+    {
+      "name": "q0.9_io",
+      "preferences": {
+        "quality_weight": 0.9,
+        "cost_weight": 0.09999999999999998,
+        "cost_weights": [
+          0.0,
+          1.0,
+          0.0
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "recent_50"
+    },
+    {
+      "name": "q0.9_compute",
+      "preferences": {
+        "quality_weight": 0.9,
+        "cost_weight": 0.09999999999999998,
+        "cost_weights": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "semantic_20"
+    },
+    {
+      "name": "q0.99_mac_cap50",
+      "preferences": {
+        "quality_weight": 0.99,
+        "cost_weight": 0.010000000000000009,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": 336096,
+        "grid": "original",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "recent_50"
+    },
+    {
+      "name": "extended_q0",
+      "preferences": {
+        "quality_weight": 0.0,
+        "cost_weight": 1.0,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "extended",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "recent_5"
+    },
+    {
+      "name": "extended_q0.25",
+      "preferences": {
+        "quality_weight": 0.25,
+        "cost_weight": 0.75,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "extended",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "recent_5"
+    },
+    {
+      "name": "extended_q0.5",
+      "preferences": {
+        "quality_weight": 0.5,
+        "cost_weight": 0.5,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "extended",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "recent_5"
+    },
+    {
+      "name": "extended_q0.75",
+      "preferences": {
+        "quality_weight": 0.75,
+        "cost_weight": 0.25,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "extended",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "semantic_5"
+    },
+    {
+      "name": "extended_q0.9",
+      "preferences": {
+        "quality_weight": 0.9,
+        "cost_weight": 0.09999999999999998,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "extended",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "semantic_16"
+    },
+    {
+      "name": "extended_q0.95",
+      "preferences": {
+        "quality_weight": 0.95,
+        "cost_weight": 0.050000000000000044,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "extended",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "semantic_16"
+    },
+    {
+      "name": "extended_q0.99",
+      "preferences": {
+        "quality_weight": 0.99,
+        "cost_weight": 0.010000000000000009,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "extended",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "semantic_64"
+    },
+    {
+      "name": "extended_q1",
+      "preferences": {
+        "quality_weight": 1.0,
+        "cost_weight": 0.0,
+        "cost_weights": [
+          0.3333333333333333,
+          0.3333333333333333,
+          0.3333333333333333
+        ],
+        "max_read_tokens": 2048,
+        "max_linear_macs": null,
+        "grid": "extended",
+        "max_logical_bytes": null
+      },
+      "fixed_comparator": "semantic_64"
+    }
+  ]
+}

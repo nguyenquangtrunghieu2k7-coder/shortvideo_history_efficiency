@@ -1,0 +1,20 @@
+{
+  "status": "MEASURED_OFFLINE_DIAGNOSTIC_NOT_PRODUCTION",
+  "n_requests": 5254,
+  "rows": 36,
+  "repeats_retrieval": 3,
+  "shards": 8,
+  "bits_per_key": 12,
+  "hashes": 5,
+  "workers": 3,
+  "output": "/Users/nguyenquangtrunghieu/shortvideo_history_efficiency/reports/experiments/policy_refresh_resource_matrix.csv",
+  "limitations": [
+    "Refresh workload is a count proxy; refresh CPU/memory is NOT measured here.",
+    "Bloom/index/feature measurements are Python wall/process CPU and tracemalloc allocations, not process peak RSS.",
+    "Inference timing is imported from previous 36-cell run and is not a repeated end-to-end benchmark.",
+    "M2.3 retrieval loads Full history before policy slicing; no true lazy K-aware retrieval.",
+    "Bloom and exact retrieval are alternative paths; do not sum both.",
+    "Index build is offline; do not add to per-request serving latency without amortization.",
+    "Timing measurements are not synchronized across all components or measured on production hardware."
+  ]
+}

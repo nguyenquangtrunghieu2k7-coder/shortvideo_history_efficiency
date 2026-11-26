@@ -1,0 +1,572 @@
+{
+  "original_budgets": [
+    0,
+    1,
+    5,
+    10,
+    20,
+    50,
+    100,
+    2048
+  ],
+  "extended_budgets": [
+    0,
+    1,
+    5,
+    10,
+    16,
+    20,
+    32,
+    50,
+    64,
+    100,
+    128,
+    256,
+    512,
+    2048
+  ],
+  "status": "EXECUTION_PASS",
+  "selected_model": "extra_trees",
+  "requests": 6455,
+  "fit_requests": 4366,
+  "calibration_requests": 2088,
+  "checkpoint_sha256": "92e5b1da3385295b650eea592bb1e0107a9a17bb554c050eec8232b6a42c3449",
+  "snapshot_id": "b69bcdb96caf49bab627a1ce580c002c",
+  "quality_scale": 0.01,
+  "actions": [
+    "recent_0",
+    "recent_1",
+    "semantic_1",
+    "recent_5",
+    "semantic_5",
+    "recent_10",
+    "semantic_10",
+    "recent_16",
+    "semantic_16",
+    "recent_20",
+    "semantic_20",
+    "recent_32",
+    "semantic_32",
+    "recent_50",
+    "semantic_50",
+    "recent_64",
+    "semantic_64",
+    "recent_100",
+    "semantic_100",
+    "recent_128",
+    "semantic_128",
+    "recent_256",
+    "semantic_256",
+    "recent_512",
+    "semantic_512",
+    "recent_2048"
+  ],
+  "validation_models": [
+    {
+      "model": "ridge",
+      "mean_realized_utility": 0.2830864632782325,
+      "mean_regret_rmse": 0.0447609123868486
+    },
+    {
+      "model": "extra_trees",
+      "mean_realized_utility": 0.10355364034410261,
+      "mean_regret_rmse": 0.04432930808079085
+    }
+  ],
+  "profiles": [
+    {
+      "profile": "q0",
+      "fixed_action": "recent_5",
+      "adaptive_auc": 0.6947925612528417,
+      "fixed_auc": 0.6969117832786057,
+      "context_free_auc": 0.6947925612528417,
+      "delta_auc_vs_fixed": -0.0021192220257639782,
+      "ci95_vs_fixed": [
+        -0.011901822166636572,
+        0.007275225077000796
+      ],
+      "ci95_vs_context_free": [
+        0.0,
+        0.0
+      ],
+      "adaptive_cost": 0.3888724878355364,
+      "fixed_cost": 0.11912199303020869,
+      "context_free_cost": 0.3888724878355364,
+      "adaptive_mean_k": 0.0,
+      "fixed_mean_k": 4.987141750580945,
+      "context_free_mean_k": 0.0
+    },
+    {
+      "profile": "q0.25",
+      "fixed_action": "recent_5",
+      "adaptive_auc": 0.697464953271028,
+      "fixed_auc": 0.6969117832786057,
+      "context_free_auc": 0.695917213942915,
+      "delta_auc_vs_fixed": 0.0005531699924222755,
+      "ci95_vs_fixed": [
+        -0.009688747864101451,
+        0.010469682074161513
+      ],
+      "ci95_vs_context_free": [
+        -0.004506240036433304,
+        0.00757802898213169
+      ],
+      "adaptive_cost": 0.4011175693743361,
+      "fixed_cost": 0.11912199303020869,
+      "context_free_cost": 0.38913234881878384,
+      "adaptive_mean_k": 0.6841208365608056,
+      "fixed_mean_k": 4.987141750580945,
+      "context_free_mean_k": 0.014562354763749032
+    },
+    {
+      "profile": "q0.5",
+      "fixed_action": "recent_5",
+      "adaptive_auc": 0.7002888987117959,
+      "fixed_auc": 0.6969117832786057,
+      "context_free_auc": 0.6953763576660773,
+      "delta_auc_vs_fixed": 0.003377115433190192,
+      "ci95_vs_fixed": [
+        -0.0063610341351927726,
+        0.012600983311325547
+      ],
+      "ci95_vs_context_free": [
+        -0.0019179121452123997,
+        0.012002025415636804
+      ],
+      "adaptive_cost": 0.4772552899016791,
+      "fixed_cost": 0.11912199303020869,
+      "context_free_cost": 0.391030529803996,
+      "adaptive_mean_k": 4.668474051123161,
+      "fixed_mean_k": 4.987141750580945,
+      "context_free_mean_k": 0.11417505809450039
+    },
+    {
+      "profile": "q0.75",
+      "fixed_action": "semantic_5",
+      "adaptive_auc": 0.701624147511998,
+      "fixed_auc": 0.7005268060116191,
+      "context_free_auc": 0.7031984086890629,
+      "delta_auc_vs_fixed": 0.001097341500378879,
+      "ci95_vs_fixed": [
+        -0.007491630756904333,
+        0.010087937070436993
+      ],
+      "ci95_vs_context_free": [
+        -0.009172339006086133,
+        0.004972478912705961
+      ],
+      "adaptive_cost": 0.6473416312096437,
+      "fixed_cost": 0.4802405058109987,
+      "context_free_cost": 0.776707769599671,
+      "adaptive_mean_k": 13.435786212238575,
+      "fixed_mean_k": 4.987141750580945,
+      "context_free_mean_k": 20.13648334624322
+    },
+    {
+      "profile": "q0.9",
+      "fixed_action": "recent_50",
+      "adaptive_auc": 0.7020674412730488,
+      "fixed_auc": 0.7070996463753474,
+      "context_free_auc": 0.7066358297549886,
+      "delta_auc_vs_fixed": -0.005032205102298626,
+      "ci95_vs_fixed": [
+        -0.01145178222836026,
+        0.0015291730159707666
+      ],
+      "ci95_vs_context_free": [
+        -0.01049011667201027,
+        0.0009644857313663404
+      ],
+      "adaptive_cost": 0.9777825517448335,
+      "fixed_cost": 0.9772790470473819,
+      "context_free_cost": 1.3456918387008008,
+      "adaptive_mean_k": 30.358636715724245,
+      "fixed_mean_k": 48.838574748257166,
+      "context_free_mean_k": 49.21130906274206
+    },
+    {
+      "profile": "q0.95",
+      "fixed_action": "semantic_50",
+      "adaptive_auc": 0.70394765092195,
+      "fixed_auc": 0.7065199545339731,
+      "context_free_auc": 0.709061000252589,
+      "delta_auc_vs_fixed": -0.002572303612023097,
+      "ci95_vs_fixed": [
+        -0.008444981366915993,
+        0.0024985446764697224
+      ],
+      "ci95_vs_context_free": [
+        -0.010411512030520459,
+        -0.0003701788752236114
+      ],
+      "adaptive_cost": 1.2755338309522128,
+      "fixed_cost": 1.3383975598281717,
+      "context_free_cost": 2.234393306534159,
+      "adaptive_mean_k": 45.584353214562356,
+      "fixed_mean_k": 48.838574748257166,
+      "context_free_mean_k": 94.62354763749032
+    },
+    {
+      "profile": "q0.99",
+      "fixed_action": "semantic_50",
+      "adaptive_auc": 0.7041121495327102,
+      "fixed_auc": 0.7065199545339731,
+      "context_free_auc": 0.709061000252589,
+      "delta_auc_vs_fixed": -0.0024078050012629193,
+      "ci95_vs_fixed": [
+        -0.007678994839870365,
+        0.002477118031889058
+      ],
+      "ci95_vs_context_free": [
+        -0.009751743346724915,
+        -0.00044721859944040214
+      ],
+      "adaptive_cost": 1.6626630962950868,
+      "fixed_cost": 1.3383975598281717,
+      "context_free_cost": 2.234393306534159,
+      "adaptive_mean_k": 65.37536793183578,
+      "fixed_mean_k": 48.838574748257166,
+      "context_free_mean_k": 94.62354763749032
+    },
+    {
+      "profile": "q1",
+      "fixed_action": "semantic_50",
+      "adaptive_auc": 0.7046372189946957,
+      "fixed_auc": 0.7065199545339731,
+      "context_free_auc": 0.709061000252589,
+      "delta_auc_vs_fixed": -0.0018827355392774248,
+      "ci95_vs_fixed": [
+        -0.006907669753728851,
+        0.0027840929155462935
+      ],
+      "ci95_vs_context_free": [
+        -0.009064511666968181,
+        3.0123541553453853e-06
+      ],
+      "adaptive_cost": 2.159871517067935,
+      "fixed_cost": 1.3383975598281717,
+      "context_free_cost": 2.234393306534159,
+      "adaptive_mean_k": 90.78466305189775,
+      "fixed_mean_k": 48.838574748257166,
+      "context_free_mean_k": 94.62354763749032
+    },
+    {
+      "profile": "q0.9_cap50",
+      "fixed_action": "semantic_20",
+      "adaptive_auc": 0.7018764208133366,
+      "fixed_auc": 0.7031270522859308,
+      "context_free_auc": 0.7065199545339731,
+      "delta_auc_vs_fixed": -0.001250631472594188,
+      "ci95_vs_fixed": [
+        -0.008079413306744016,
+        0.004983590262086157
+      ],
+      "ci95_vs_context_free": [
+        -0.01034876768079251,
+        0.0008233836094773099
+      ],
+      "adaptive_cost": 0.9073552769733527,
+      "fixed_cost": 0.7709414693437521,
+      "context_free_cost": 1.3383975598281717,
+      "adaptive_mean_k": 26.758946553059644,
+      "fixed_mean_k": 19.841828040278852,
+      "context_free_mean_k": 48.838574748257166
+    },
+    {
+      "profile": "q0.99_cap128",
+      "fixed_action": "semantic_50",
+      "adaptive_auc": 0.7042340237433695,
+      "fixed_auc": 0.7065199545339731,
+      "context_free_auc": 0.709061000252589,
+      "delta_auc_vs_fixed": -0.002285930790603574,
+      "ci95_vs_fixed": [
+        -0.007592070190180611,
+        0.002539809906783355
+      ],
+      "ci95_vs_context_free": [
+        -0.009739239161279601,
+        -0.00035035653523059825
+      ],
+      "adaptive_cost": 1.5974873988642395,
+      "fixed_cost": 1.3383975598281717,
+      "context_free_cost": 2.234393306534159,
+      "adaptive_mean_k": 62.04477149496514,
+      "fixed_mean_k": 48.838574748257166,
+      "context_free_mean_k": 94.62354763749032
+    },
+    {
+      "profile": "q1_cap50",
+      "fixed_action": "recent_50",
+      "adaptive_auc": 0.7026708133367011,
+      "fixed_auc": 0.7070996463753474,
+      "context_free_auc": 0.7065199545339731,
+      "delta_auc_vs_fixed": -0.004428833038646274,
+      "ci95_vs_fixed": [
+        -0.010320955813553653,
+        0.0013456978140402222
+      ],
+      "ci95_vs_context_free": [
+        -0.009143931900079416,
+        0.0008471922544533374
+      ],
+      "adaptive_cost": 1.0357670225607039,
+      "fixed_cost": 0.9772790470473819,
+      "context_free_cost": 1.3383975598281717,
+      "adaptive_mean_k": 33.33632842757552,
+      "fixed_mean_k": 48.838574748257166,
+      "context_free_mean_k": 48.838574748257166
+    },
+    {
+      "profile": "q0.9_io",
+      "fixed_action": "recent_50",
+      "adaptive_auc": 0.701977772164688,
+      "fixed_auc": 0.7070996463753474,
+      "context_free_auc": 0.7066358297549886,
+      "delta_auc_vs_fixed": -0.0051218742106593496,
+      "ci95_vs_fixed": [
+        -0.011525183663684324,
+        0.0014417802232580736
+      ],
+      "ci95_vs_context_free": [
+        -0.01061169773086582,
+        0.0009170153533807481
+      ],
+      "adaptive_cost": 1.680842757552285,
+      "fixed_cost": 0.9767714949651433,
+      "context_free_cost": 2.0675817195972113,
+      "adaptive_mean_k": 29.87436096049574,
+      "fixed_mean_k": 48.838574748257166,
+      "context_free_mean_k": 49.21130906274206
+    },
+    {
+      "profile": "q0.9_compute",
+      "fixed_action": "semantic_20",
+      "adaptive_auc": 0.7020134503662542,
+      "fixed_auc": 0.7031270522859308,
+      "context_free_auc": 0.7066421444809295,
+      "delta_auc_vs_fixed": -0.0011136019196765767,
+      "ci95_vs_fixed": [
+        -0.008243249953053146,
+        0.005178020382724625
+      ],
+      "ci95_vs_context_free": [
+        -0.010495343444158861,
+        0.000847031772820585
+      ],
+      "adaptive_cost": 0.6509326205570125,
+      "fixed_cost": 0.435795748077732,
+      "context_free_cost": 0.9857545404201212,
+      "adaptive_mean_k": 31.179085979860574,
+      "fixed_mean_k": 19.841828040278852,
+      "context_free_mean_k": 49.23733539891557
+    },
+    {
+      "profile": "q0.99_mac_cap50",
+      "fixed_action": "recent_50",
+      "adaptive_auc": 0.7030547486739076,
+      "fixed_auc": 0.7070996463753474,
+      "context_free_auc": 0.7065199545339731,
+      "delta_auc_vs_fixed": -0.004044897701439787,
+      "ci95_vs_fixed": [
+        -0.010164090676905393,
+        0.001840765049966697
+      ],
+      "ci95_vs_context_free": [
+        -0.008790205932867102,
+        0.0014329938299282832
+      ],
+      "adaptive_cost": 1.02615132425371,
+      "fixed_cost": 0.9772790470473819,
+      "context_free_cost": 1.3383975598281717,
+      "adaptive_mean_k": 32.843687064291245,
+      "fixed_mean_k": 48.838574748257166,
+      "context_free_mean_k": 48.838574748257166
+    },
+    {
+      "profile": "extended_q0",
+      "fixed_action": "recent_5",
+      "adaptive_auc": 0.6947925612528417,
+      "fixed_auc": 0.6969117832786057,
+      "context_free_auc": 0.6947925612528417,
+      "delta_auc_vs_fixed": -0.0021192220257639782,
+      "ci95_vs_fixed": [
+        -0.011901822166636572,
+        0.007275225077000796
+      ],
+      "ci95_vs_context_free": [
+        0.0,
+        0.0
+      ],
+      "adaptive_cost": 0.3888724878355364,
+      "fixed_cost": 0.11912199303020869,
+      "context_free_cost": 0.3888724878355364,
+      "adaptive_mean_k": 0.0,
+      "fixed_mean_k": 4.987141750580945,
+      "context_free_mean_k": 0.0
+    },
+    {
+      "profile": "extended_q0.25",
+      "fixed_action": "recent_5",
+      "adaptive_auc": 0.6974134882546098,
+      "fixed_auc": 0.6969117832786057,
+      "context_free_auc": 0.695917213942915,
+      "delta_auc_vs_fixed": 0.0005017049760041026,
+      "ci95_vs_fixed": [
+        -0.009728368583449243,
+        0.010448558935049016
+      ],
+      "ci95_vs_context_free": [
+        -0.004524680512441001,
+        0.007521130326129793
+      ],
+      "adaptive_cost": 0.40112982952825327,
+      "fixed_cost": 0.11912199303020869,
+      "context_free_cost": 0.38913234881878384,
+      "adaptive_mean_k": 0.6848954298993029,
+      "fixed_mean_k": 4.987141750580945,
+      "context_free_mean_k": 0.014562354763749032
+    },
+    {
+      "profile": "extended_q0.5",
+      "fixed_action": "recent_5",
+      "adaptive_auc": 0.7000419929275069,
+      "fixed_auc": 0.6969117832786057,
+      "context_free_auc": 0.6953621495327102,
+      "delta_auc_vs_fixed": 0.0031302096489012055,
+      "ci95_vs_fixed": [
+        -0.006597268914312252,
+        0.012230691033993976
+      ],
+      "ci95_vs_context_free": [
+        -0.002156975560808125,
+        0.011801856180502602
+      ],
+      "adaptive_cost": 0.47751998149176955,
+      "fixed_cost": 0.11912199303020869,
+      "context_free_cost": 0.39140576160859347,
+      "adaptive_mean_k": 4.683036405886909,
+      "fixed_mean_k": 4.987141750580945,
+      "context_free_mean_k": 0.13369481022463206
+    },
+    {
+      "profile": "extended_q0.75",
+      "fixed_action": "semantic_5",
+      "adaptive_auc": 0.7002263829249811,
+      "fixed_auc": 0.7005268060116191,
+      "context_free_auc": 0.7032302980550644,
+      "delta_auc_vs_fixed": -0.0003004230866380242,
+      "ci95_vs_fixed": [
+        -0.009155620216658441,
+        0.008748761701217453
+      ],
+      "ci95_vs_context_free": [
+        -0.010630592250677695,
+        0.0037058850702459453
+      ],
+      "adaptive_cost": 0.6701216228803499,
+      "fixed_cost": 0.4802405058109987,
+      "context_free_cost": 0.7773899029107024,
+      "adaptive_mean_k": 14.607436096049573,
+      "fixed_mean_k": 4.987141750580945,
+      "context_free_mean_k": 20.1713400464756
+    },
+    {
+      "profile": "extended_q0.9",
+      "fixed_action": "semantic_16",
+      "adaptive_auc": 0.7012525258903763,
+      "fixed_auc": 0.7030519070472341,
+      "context_free_auc": 0.7042624400101036,
+      "delta_auc_vs_fixed": -0.0017993811568577378,
+      "ci95_vs_fixed": [
+        -0.008214494233634313,
+        0.004920144784691895
+      ],
+      "ci95_vs_context_free": [
+        -0.008809262090549464,
+        0.0022583903038694295
+      ],
+      "adaptive_cost": 0.9575770823621417,
+      "fixed_cost": 0.6937603589782507,
+      "context_free_cost": 1.018034408228168,
+      "adaptive_mean_k": 29.330441518202942,
+      "fixed_mean_k": 15.897908597986058,
+      "context_free_mean_k": 32.46816421378776
+    },
+    {
+      "profile": "extended_q0.95",
+      "fixed_action": "semantic_16",
+      "adaptive_auc": 0.7032340868906289,
+      "fixed_auc": 0.7030519070472341,
+      "context_free_auc": 0.7071151174539025,
+      "delta_auc_vs_fixed": 0.0001821798433948585,
+      "ci95_vs_fixed": [
+        -0.006044933322149895,
+        0.006629073251082748
+      ],
+      "ci95_vs_context_free": [
+        -0.0093361600550747,
+        0.0009140112732720214
+      ],
+      "adaptive_cost": 1.2504232312216796,
+      "fixed_cost": 0.6937603589782507,
+      "context_free_cost": 1.6054876156884244,
+      "adaptive_mean_k": 44.304570100697134,
+      "fixed_mean_k": 15.897908597986058,
+      "context_free_mean_k": 62.48675445391169
+    },
+    {
+      "profile": "extended_q0.99",
+      "fixed_action": "semantic_64",
+      "adaptive_auc": 0.7031441020459713,
+      "fixed_auc": 0.7068893660015155,
+      "context_free_auc": 0.7089340742611772,
+      "delta_auc_vs_fixed": -0.003745263955544198,
+      "ci95_vs_fixed": [
+        -0.008830502908341328,
+        0.000826410561031029
+      ],
+      "ci95_vs_context_free": [
+        -0.010651579523859997,
+        -0.0011701098590174964
+      ],
+      "adaptive_cost": 1.7146771367673121,
+      "fixed_cost": 1.5957528154141047,
+      "context_free_cost": 2.7069843595275387,
+      "adaptive_mean_k": 68.03563129357087,
+      "fixed_mean_k": 61.98931061192874,
+      "context_free_mean_k": 118.7727343144849
+    },
+    {
+      "profile": "extended_q1",
+      "fixed_action": "semantic_64",
+      "adaptive_auc": 0.704356213690326,
+      "fixed_auc": 0.7068893660015155,
+      "context_free_auc": 0.7089340742611772,
+      "delta_auc_vs_fixed": -0.002533152311189557,
+      "ci95_vs_fixed": [
+        -0.007439036775942381,
+        0.0020127761325145817
+      ],
+      "ci95_vs_context_free": [
+        -0.009478921146713329,
+        -0.000208425527014144
+      ],
+      "adaptive_cost": 2.0651377434635068,
+      "fixed_cost": 1.5957528154141047,
+      "context_free_cost": 2.7069843595275387,
+      "adaptive_mean_k": 85.94593338497289,
+      "fixed_mean_k": 61.98931061192874,
+      "context_free_mean_k": 118.7727343144849
+    }
+  ],
+  "monotonic_cost": true,
+  "http_prediction_parity": true,
+  "caveats": [
+    "Test previously inspected: exploratory only.",
+    "Expected BCE regret is a surrogate, not per-request AUC.",
+    "Resource cost includes read tokens, logical bytes and model linear MACs; not physical IO, complete FLOPs or cloud billing.",
+    "Fixed comparison is validation-selected at or below adaptive weighted cost, not exactly cost-matched on test.",
+    "HTTP subset is local single-worker; quality on full test is offline action replay.",
+    "Selector fit and model checkpoint selection reuse validation; independent holdout required."
+  ]
+}
