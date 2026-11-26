@@ -61,6 +61,10 @@ class Engine(p.Engine):
     def __init__(self,args):
         super().__init__(args)
         self.policy_model=joblib.load(args.selector)
+        from src.integration.m5_fast_predictor import FastPredictor
+        self.fast_predictor=FastPredictor(self.policy_model["regressor"])
+        self.fast_enabled=True
+        self.fast_path_enabled=True
         if self.store.manifest.get("centroid_encoding")!="int8_unit" or self.policy_model["actions"]!=s.ACTIONS or self.policy_model["checkpoint_sha256"]!=_sha(args.checkpoint) or self.policy_model["snapshot_id"]!=self.bundle["snapshot_id"]:
             raise ValueError("Selector binding mismatch")
     def score(self,key,c,u,policy):
@@ -87,18 +91,27 @@ class Engine(p.Engine):
             return result
         adaptive=policy=="preference"
         fixed_i=None if adaptive else s.ACTION_NAMES.index(policy)
-        needs_summary=adaptive or s.ACTIONS[fixed_i][0]=="semantic"
+        shortcut=adaptive and self.fast_path_enabled and (pref["quality_weight"]==0 or pref["max_read_tokens"]==0)
+        if adaptive and self.fast_path_enabled and not shortcut and pref["max_logical_bytes"] is not None:
+            n=read("meta")["n"]
+            if ((n+31)//32)*(16+self.model.d)>pref["max_logical_bytes"]:
+                raise ValueError("Summary retrieval exceeds logical-byte cap")
+        needs_summary=(adaptive and not shortcut) or (not adaptive and s.ACTIONS[fixed_i][0]=="semantic")
         meta=read("summaries" if needs_summary else "meta")
         n=meta["n"];blocks=meta.get("blocks",[]);q=self.emb[c]
         start=perf_counter()
-        resources=s.resource_table([n],self.model.d,True,adaptive)
-        if adaptive:
+        resources=s.resource_table([n],self.model.d,True,adaptive and not shortcut)
+        if shortcut:
+            ix=0;predicted_regret=None
+            if pref["max_linear_macs"] is not None and resources[0,0,2]>pref["max_linear_macs"]:raise ValueError("No feasible zero-history action")
+        elif adaptive:
             x=s.feature_vector(n,blocks,q,self.ue[u%len(self.ue)])[None,:]
-            regret=self.policy_model["regressor"].predict(x)
+            regret=(self.fast_predictor if self.fast_enabled else self.policy_model["regressor"]).predict(x)
             ix=int(s.choose(regret,resources,pref)[0])
             predicted_regret=float(regret[0,ix])
         else:ix=fixed_i;predicted_regret=None
         mode,k=s.ACTIONS[ix];k=min(k,n)
+        if adaptive and pref["max_logical_bytes"] is not None and resources[0,ix,1]>pref["max_logical_bytes"]:raise ValueError("Logical-byte cap exceeded")
         ranges=p.semantic_ranges(blocks,q,k) if mode=="semantic" else [[n-k,n]]
         timing["selector_ms"]=(perf_counter()-start)*1000
         tokens=read("tokens",ranges=ranges)["tokens"] if k else []
