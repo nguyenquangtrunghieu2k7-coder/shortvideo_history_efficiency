@@ -60,8 +60,8 @@ ROOT = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = Path(os.environ.get("SHORTVIDEO_PROCESSED_DIR", ROOT / "data" / "processed")).resolve()
 PHASE7_DIR = PROCESSED_DIR / "phase7"
 
-MODEL_DIR = ROOT / "models"
-RESULT_DIR = PROCESSED_DIR / "phase8"
+MODEL_DIR = Path(os.environ.get("SHORTVIDEO_MODEL_DIR", ROOT / "models"))
+RESULT_DIR = Path(os.environ.get("SHORTVIDEO_RESULT_DIR", PROCESSED_DIR / "phase8"))
 
 MODEL_DIR.mkdir(
     parents=True,
