@@ -1,0 +1,25 @@
+services:
+  selector:
+    build:
+      context: ../..
+      dockerfile: deploy/m5/Dockerfile
+    env_file:
+      - ${M5_ENV_FILE:?Set M5_ENV_FILE to a trusted credentials file}
+    environment:
+      SHORTVIDEO_DEVICE: cpu
+      SHORTVIDEO_PROCESSED_DIR: /app/data/processed
+    volumes:
+      - ${M5_DATA_DIR:?Set M5_DATA_DIR}:/app/data/processed:ro
+      - ${M5_M4_DIR:?Set M5_M4_DIR}:/app/m4:ro
+      - ${M5_OUTPUT_DIR:?Set M5_OUTPUT_DIR}:/app/m5
+      - ${M5_POLICY_DIR:?Set M5_POLICY_DIR}:/app/policy:ro
+    command: ["--m4-dir", "/app/m4", "--output", "/app/m5", "--serve", "--policy-file", "/app/policy/business.json", "--bind", "0.0.0.0", "--port", "8778"]
+    ports:
+      - "127.0.0.1:8778:8778"
+    cpus: 2
+    mem_limit: 6g
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    init: true
