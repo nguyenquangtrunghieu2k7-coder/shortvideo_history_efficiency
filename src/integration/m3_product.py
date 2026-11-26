@@ -17,7 +17,9 @@ import random
 import subprocess
 import sys
 import threading
-from time import perf_counter
+from time import perf_counter, process_time
+import resource
+import platform
 
 import joblib
 import numpy as np
@@ -190,21 +192,21 @@ class Engine:
         self.macs+=out.numel()*layer.in_features
     def score(self,key,c,u,policy):
         start=perf_counter();stats=Counter();timing=Counter()
-        if policy not in (POLICIES+("hybrid",) if self.is_m4 else POLICIES) or not 0<c<len(self.emb) or u<0:raise ValueError("Invalid request")
+        if policy not in (POLICIES+("hybrid","adaptive_eager","adaptive_pipeline") if self.is_m4 else POLICIES) or not 0<c<len(self.emb) or u<0:raise ValueError("Invalid request")
         mode="indexed_exact" if policy=="adaptive_exact" else "indexed_bloom"
         def lookup(op,**kwargs):
             t=perf_counter();r,s=self.store.lookup(key,op,mode=mode,**kwargs)
             timing["storage_ms"]+=(perf_counter()-t)*1000;stats.update(s)
             if r is None:raise KeyError("History not found")
             return r
-        semantic=policy in ("semantic50","adaptive","adaptive_exact","prune","merge","hybrid")
+        semantic=policy in ("semantic50","adaptive","adaptive_exact","prune","merge","hybrid","adaptive_eager","adaptive_pipeline")
         meta=lookup("summaries" if semantic else "meta");n=meta["n"]
         t=perf_counter();q=self.emb[c];usr=self.ue[u%len(self.ue)]
         if policy=="full":k=n
         elif policy in ("fixed50","random50","semantic50"):k=min(n,50)
         else:
             f=features(n,meta["blocks"],q,usr)[None,:]
-            regret=(self.selector_w@f[0]+self.selector_b) if self.is_m4 else self.bundle["regressor"].predict(f)[0]
+            regret=(self.selector_w@f[0]+self.selector_b) if self.is_m4 and policy!="adaptive_pipeline" else self.bundle["regressor"].predict(f)[0]
             costs=np.minimum(n,np.asarray(BUDGETS))/50.
             k=min(n,BUDGETS[int(np.argmin(regret+self.bundle["penalty"]*costs))])
         read_budget=k
@@ -214,9 +216,14 @@ class Engine:
             ranges=positions_to_ranges(random.Random(key).sample(range(n),k))
         else:ranges=[[n-k,n]]
         timing["selector_ms"]=(perf_counter()-t)*1000
-        tokens=lookup("tokens",ranges=ranges)["tokens"] if read_budget else []
-        if len(tokens)!=read_budget or stats["token_rows"]!=read_budget:raise RuntimeError("Bounded retrieval invariant failed")
-        if policy!="full" and stats["token_rows"]>512:raise RuntimeError("Online token budget exceeded")
+        eager=policy=="adaptive_eager"
+        if eager:
+            all_tokens=lookup("tokens",ranges=[[0,n]])["tokens"] if n else []
+            tokens=[all_tokens[j] for a,b in ranges for j in range(a,b)]
+            if stats["token_rows"]!=n:raise RuntimeError("Eager read accounting failed")
+        else:tokens=lookup("tokens",ranges=ranges)["tokens"] if read_budget else []
+        if len(tokens)!=read_budget or (not eager and stats["token_rows"]!=read_budget):raise RuntimeError("Bounded retrieval invariant failed")
+        if policy not in ("full","adaptive_eager") and stats["token_rows"]>512:raise RuntimeError("Online token budget exceeded")
         h=[v for _,v in tokens];d=self.device
         t=perf_counter()
         with self.lock,torch.inference_mode():
@@ -228,7 +235,7 @@ class Engine:
             prob=float(torch.sigmoid(z).cpu().item());used=int(count.cpu().item());macs=self.macs
             sync(d)
         timing["model_ms"]=(perf_counter()-t)*1000
-        return dict(score=prob,history_length=n,budget=k,read_tokens=len(h),model_tokens=used,
+        return dict(score=prob,history_length=n,budget=k,read_tokens=stats["token_rows"],model_tokens=used,
                     linear_macs=macs,storage=dict(stats),timing=dict(timing),server_ms=(perf_counter()-start)*1000)
 
 class RecommendationHTTPServer(ThreadingHTTPServer):
@@ -292,7 +299,7 @@ def evaluate(args,engine):
     server=make_server(engine,token,0);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     conn=http.client.HTTPConnection("127.0.0.1",server.server_port,timeout=60)
     rows=[];scores={};trials=defaultdict(list)
-    policies=list(POLICIES)+(["hybrid"] if engine.is_m4 else [])
+    policies=list(POLICIES)+(["hybrid","adaptive_eager","adaptive_pipeline"] if engine.is_m4 else [])
     def request(row,policy):
         payload=json.dumps(dict(history_key=str(int(row.evaluation_id)),candidate_id=int(row.candidate),user_id=int(row.user_id),policy=policy))
         start=perf_counter()
@@ -305,9 +312,9 @@ def evaluate(args,engine):
         for rep in range(args.repeats):
             order=policies.copy();random.Random(42+rep).shuffle(order)
             for policy in order:
-                t=perf_counter()
+                t=perf_counter();cpu_start=process_time()
                 out=[request(row,policy) for row in ev.itertuples(index=False)]
-                wall=perf_counter()-t
+                wall=perf_counter()-t;cpu_seconds=process_time()-cpu_start
                 pred=np.asarray([d["score"] for d in out])
                 if not np.isfinite(pred).all():raise RuntimeError("Nonfinite score")
                 if policy in scores and not np.allclose(scores[policy],pred,atol=1e-6,rtol=0):raise RuntimeError("Repeated prediction drift")
@@ -326,13 +333,16 @@ def evaluate(args,engine):
                     mean_storage_ms=float(np.mean([d["timing"]["storage_ms"] for d in out])),
                     mean_selector_ms=float(np.mean([d["timing"]["selector_ms"] for d in out])),
                     mean_model_ms=float(np.mean([d["timing"]["model_ms"] for d in out])),
-                    throughput_rps=len(out)/wall,storage_totals=dict(stats),repeat=rep+1)
+                    throughput_rps=len(out)/wall,cpu_seconds=cpu_seconds,process_peak_rss_bytes=int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss*(1 if platform.system()=="Darwin" else 1024)),storage_totals=dict(stats),repeat=rep+1)
                 trials[policy].append(metrics);print(json.dumps(metrics),flush=True)
         if not np.allclose(scores["adaptive"],scores["adaptive_exact"],atol=1e-7,rtol=0):raise RuntimeError("Bloom prediction parity failed")
+        if engine.is_m4:
+            for alias in ("adaptive_eager","adaptive_pipeline"):
+                if not np.allclose(scores["adaptive"],scores[alias],atol=1e-7,rtol=0):raise RuntimeError("Optimization prediction parity failed: "+alias)
         from src.integration.evaluate_shared_variable_k import paired_ci
         for p in policies:
             a=trials[p];row=dict(a[0]);row.pop("repeat")
-            for key in ("p50_ms","p95_ms","p99_ms","throughput_rps","mean_server_ms","mean_storage_ms","mean_selector_ms","mean_model_ms"):
+            for key in ("p50_ms","p95_ms","p99_ms","throughput_rps","mean_server_ms","mean_storage_ms","mean_selector_ms","mean_model_ms","cpu_seconds","process_peak_rss_bytes"):
                 row[key]=float(np.median([v[key] for v in a]))
             row["delta_auc_vs_full"]=row["auc"]-a[0]["auc"] if p=="full" else row["auc"]-trials["full"][0]["auc"]
             row["delta_auc_ci95"]=paired_ci(y,u,scores[p],scores["full"],200,42)
