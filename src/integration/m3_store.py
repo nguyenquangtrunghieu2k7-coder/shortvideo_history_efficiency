@@ -19,7 +19,11 @@ def canonical(x):
 def route(key,n):
     return int.from_bytes(hashlib.sha256(key.encode()).digest()[:8],"big")%n
 
-def build(root,records,embedding,secret,shards=8,block=32,metadata=None):
+def quantize_centroid(v):
+    v=np.asarray(v,dtype=np.float32)
+    return np.rint(127*v/max(float(np.linalg.norm(v)),1e-8)).clip(-127,127).astype(np.int8)
+
+def build(root,records,embedding,secret,shards=8,block=32,metadata=None,compact=False):
     root=Path(root);root.mkdir(parents=True,exist_ok=True)
     sid=uuid.uuid4().hex
     work=Path(tempfile.mkdtemp(prefix=".build-",dir=root))
@@ -40,11 +44,11 @@ def build(root,records,embedding,secret,shards=8,block=32,metadata=None):
             for j in range(0,len(h),block):
                 hi=min(j+block,len(h))
                 cent=np.asarray(embedding[h[j:hi]].mean(0),dtype="<f4")
-                c.execute("INSERT INTO blocks VALUES (?,?,?,?,?)",(key,j//block,j,hi,cent.tobytes()))
+                c.execute("INSERT INTO blocks VALUES (?,?,?,?,?)",(key,j//block,j,hi,(quantize_centroid(cent) if compact else cent).tobytes()))
         for c in conns:c.commit();c.close()
         conns=[]
         manifest={"id":sid,"shards":shards,"block":block,"records":sum(map(len,keys)),
-                  "dim":int(embedding.shape[1]),"files":{},"bloom":[],"metadata":metadata or {}}
+                  "dim":int(embedding.shape[1]),"centroid_encoding":"int8_unit" if compact else "float32","files":{},"bloom":[],"metadata":metadata or {}}
         for i,k in enumerate(keys):
             bloom=BloomFilter(max(64,len(k)*12),7)
             for v in k:bloom.add(v)
@@ -105,7 +109,7 @@ class Store:
                 if op=="meta":result={"n":n}
                 elif op=="summaries":
                     rows=c.execute("SELECT lo,hi,centroid FROM blocks WHERE key=? ORDER BY b",(key,)).fetchall()
-                    result={"n":n,"blocks":[[a,b,np.frombuffer(v,dtype="<f4").tolist()] for a,b,v in rows]}
+                    result={"n":n,"blocks":[[a,b,np.frombuffer(v,dtype=np.int8 if self.manifest.get("centroid_encoding")=="int8_unit" else "<f4").astype(np.float32).tolist()] for a,b,v in rows]}
                     stats["summary_rows"]+=len(rows);stats["logical_payload_bytes"]+=sum(16+len(v) for a,b,v in rows)
                 elif op=="tokens":
                     ranges=ranges if ranges is not None else [(lo,hi)]
