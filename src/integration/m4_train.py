@@ -33,7 +33,11 @@ def train(args):
     if set(tr.evaluation_ids)&set(va.evaluation_ids):raise ValueError("Split overlap")
     device=baseline.get_device()
     model=Ranker(len(vocab),32)
-    if args.behavior:
+    if args.init_behavior:
+        ck=torch.load(args.init_behavior,map_location="cpu",weights_only=True)
+        if ck["vocab_sha256"]!=_sha(baseline.VIDEO_VOCAB_FILE):raise ValueError("Initial vocabulary mismatch")
+        model.item.weight.copy_(ck["state"]["item.weight"]);stats=ck["behavioral_stats"];del ck
+    elif args.behavior:
         vec,stats=behavioral_vectors(tr.history_ids,len(vocab),32,args.seed)
         model.item.weight.copy_(torch.from_numpy(vec));del vec
     else:stats={"active_items":0}
@@ -43,13 +47,14 @@ def train(args):
     loader=DataLoader(tr,batch_size=args.batch_size,shuffle=True,collate_fn=baseline.collate_batch)
     vl=DataLoader(va,batch_size=args.batch_size,collate_fn=baseline.collate_batch)
     best=-1.;stale=0;history=[]
-    conditions=[("recent",50),("recent",2048),("semantic",50),("semantic",128),("prune",50),("merge",50),("hybrid",50)]
+    conditions=[("recent",50),("recent",2048),("semantic",50),("semantic",128),("prune",50),("merge",50),("hybrid",50)] if not args.fixed_k else [("recent",args.fixed_k)]
     args.output.parent.mkdir(parents=True,exist_ok=True)
     for ep in range(args.epochs):
         model.train();losses=[]
         for b in loader:
             mode=str(rng.choice(["recent","recent","semantic","semantic","prune","merge","hybrid"]))
             k=int(rng.choice([16,32,50,64,128,256,512,2048] if mode=="recent" else [16,32,50,64,128,256]))
+            if args.fixed_k:mode,k="recent",args.fixed_k
             (z,aux,_),y=forward(model,b,device,mode,k)
             loss=F.binary_cross_entropy_with_logits(z,y)+aux
             if args.distill and k<2048 and ep>0:
@@ -77,7 +82,7 @@ def train(args):
             best=quality;stale=0
             tmp=args.output.with_suffix(".tmp")
             torch.save(dict(state=model.state_dict(),dim=32,vocab_size=len(vocab),vocab_sha256=_sha(baseline.VIDEO_VOCAB_FILE),
-                architecture="m4",epoch=ep+1,seed=args.seed,behavior=args.behavior,distill=args.distill,
+                architecture="m4",fixed_k=args.fixed_k,epoch=ep+1,seed=args.seed,behavior=args.behavior,distill=args.distill,
                 behavioral_stats=stats,val_auc=scores,selection_score=quality),tmp)
             tmp.replace(args.output)
         else:
@@ -94,6 +99,8 @@ def main():
     p.add_argument("--seed",type=int,default=42)
     p.add_argument("--behavior",action="store_true")
     p.add_argument("--distill",action="store_true")
+    p.add_argument("--fixed-k",type=int,choices=[50,128,2048])
+    p.add_argument("--init-behavior",type=Path)
     a=p.parse_args()
     if min(a.epochs,a.batch_size,a.patience)<1:p.error("Invalid training arguments")
     train(a)
