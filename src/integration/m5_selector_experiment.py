@@ -60,7 +60,7 @@ class Engine(p.Engine):
     def __init__(self,args):
         super().__init__(args)
         self.policy_model=joblib.load(args.selector)
-        if self.policy_model["checkpoint_sha256"]!=_sha(args.checkpoint) or self.policy_model["snapshot_id"]!=self.bundle["snapshot_id"]:
+        if self.store.manifest.get("centroid_encoding")!="int8_unit" or self.policy_model["actions"]!=s.ACTIONS or self.policy_model["checkpoint_sha256"]!=_sha(args.checkpoint) or self.policy_model["snapshot_id"]!=self.bundle["snapshot_id"]:
             raise ValueError("Selector binding mismatch")
     def score(self,key,c,u,policy):
         return self.score_with_preference(key,c,u,policy,{})
@@ -137,12 +137,20 @@ def main():
     parser.add_argument("--output",type=Path,default=p.ROOT/"reports/m5_selector_v1")
     parser.add_argument("--http-sample",type=int,default=256)
     parser.add_argument("--bootstrap",type=int,default=1000)
+    parser.add_argument("--serve",action="store_true")
+    parser.add_argument("--port",type=int,default=8778)
     args=parser.parse_args()
     if min(args.http_sample,args.bootstrap)<1:parser.error("Invalid sample/bootstrap")
     d=args.output.resolve();d.mkdir(parents=True,exist_ok=True)
     m4=args.m4_dir.resolve();summary=json.loads((m4/"summary.json").read_text())
     ck=m4/(summary["selected_on_validation"]+".pt")
     args.checkpoint=ck;args.root=m4/"snapshots";args.bundle=m4/"int8.joblib";args.selector=d/"selector.joblib"
+    if args.serve:
+        _,token=p.credentials();server=p.make_server(Engine(args),token,args.port)
+        print(f"M5 preference-aware service listening on 127.0.0.1:{args.port}",flush=True)
+        try:server.serve_forever()
+        finally:server.server_close()
+        return
     device=p.baseline.get_device();model=p.load_model(ck,device)
     if not hasattr(model.item,"residual") or model.d!=32:raise ValueError("Expected M4 ranker")
     emb=p.semantic_embeddings(model);ue=model.user.weight.detach().cpu().numpy()
@@ -187,6 +195,14 @@ def main():
         target_cost=float(s.cost_table(resources[cal],pref)[j,a].mean())
         fixed=pick_fixed(P[cal],y[cal],s.resource_table(N[cal],selector=False),target_cost,pref)
         plans.append((f"q{w:g}_cap{cap}",pref,fixed))
+    for name,pref in [
+        ("q0.9_io",s.preference(.9,cost_weights=(0,1,0))),
+        ("q0.9_compute",s.preference(.9,cost_weights=(0,0,1))),
+        ("q0.99_mac_cap50",s.preference(.99,max_linear_macs=s.HEAD_MACS+s.TOKEN_MACS*50))]:
+        a=s.choose(predcal,resources[cal],pref);j=np.arange(cal.sum())
+        target_cost=float(s.cost_table(resources[cal],pref)[j,a].mean())
+        fixed=pick_fixed(P[cal],y[cal],s.resource_table(N[cal],selector=False),target_cost,pref)
+        plans.append((name,pref,fixed))
     (d/"frozen_plan.json").write_text(json.dumps(dict(selected_model=winner,profiles=[dict(name=name,preferences=pref,fixed_comparator=s.ACTION_NAMES[fixed]) for name,pref,fixed in plans]),indent=2))
     Xt,Pt,Nt=arrays(model,test,device,emb,ue)
     yt=np.asarray(test.labels);ut=np.asarray(test.user_ids);rt=s.resource_table(Nt);rf=s.resource_table(Nt,selector=False)
@@ -212,7 +228,7 @@ def main():
             adaptive_cost=ar["mean_normalized_cost"],fixed_cost=fr["mean_normalized_cost"],context_free_cost=nr["mean_normalized_cost"],
             adaptive_mean_k=ar["mean_read_tokens"],fixed_mean_k=fr["mean_read_tokens"],context_free_mean_k=nr["mean_read_tokens"]))
         for act,count in ar["action_histogram"].items():hist.append(dict(profile=name,action=act,requests=count))
-        if name in ("q0","q0.5","q0.9","q0.99","q1","q0.9_cap50"):
+        if name in ("q0","q0.5","q0.9","q0.99","q1","q0.9_cap50","q0.9_io","q0.9_compute","q0.99_mac_cap50"):
             http_actions[name]=ix;http_prefs[name]=pref
     pd.DataFrame(rows).to_csv(d/"quality_cost_frontier.csv",index=False)
     pd.DataFrame(comparisons).to_csv(d/"matched_fixed_comparison.csv",index=False)
