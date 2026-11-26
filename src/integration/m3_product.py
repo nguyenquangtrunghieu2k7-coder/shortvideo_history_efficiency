@@ -245,7 +245,7 @@ class RecommendationHTTPServer(ThreadingHTTPServer):
     block_on_close=False
 
 
-def make_server(engine,token,port):
+def make_server(engine,token,port,host="127.0.0.1"):
     class Handler(BaseHTTPRequestHandler):
         protocol_version="HTTP/1.1"
         def log_message(self,*args):pass
@@ -277,7 +277,7 @@ def make_server(engine,token,port):
             except (ValueError,TypeError):return self.reply(400,{"error":"invalid_request"})
             except Exception:return self.reply(503,{"error":"scoring_unavailable"})
             return self.reply(200,out)
-    return RecommendationHTTPServer(("127.0.0.1",port),Handler)
+    return RecommendationHTTPServer((host,port),Handler)
 
 def events_only():
     _,vmap=baseline.load_video_vocab()
