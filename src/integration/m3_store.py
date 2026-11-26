@@ -111,6 +111,13 @@ class Store:
                     rows=c.execute("SELECT lo,hi,centroid FROM blocks WHERE key=? ORDER BY b",(key,)).fetchall()
                     result={"n":n,"blocks":[[a,b,np.frombuffer(v,dtype=np.int8 if self.manifest.get("centroid_encoding")=="int8_unit" else "<f4").astype(np.float32).tolist()] for a,b,v in rows]}
                     stats["summary_rows"]+=len(rows);stats["logical_payload_bytes"]+=sum(16+len(v) for a,b,v in rows)
+                elif op=="recent":
+                    if type(hi) is not int or not 0<=hi<=2048:raise ValueError("Invalid recent budget")
+                    k=min(n,hi)
+                    rows=c.execute("SELECT pos,item FROM tokens WHERE key=? AND pos>=? ORDER BY pos",(key,n-k)).fetchall() if k else []
+                    if len(rows)!=k:raise ValueError("Incomplete history")
+                    result={"n":n,"tokens":rows}
+                    stats["token_rows"]+=len(rows);stats["logical_payload_bytes"]+=16*len(rows)
                 elif op=="tokens":
                     ranges=ranges if ranges is not None else [(lo,hi)]
                     if len(ranges)>64 or any(not 0<=a<=b<=n for a,b in ranges):raise ValueError("Invalid bounds")
