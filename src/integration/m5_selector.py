@@ -5,8 +5,15 @@ All preferences are runtime inputs; no model retraining on preference changes.""
 import math
 import numpy as np
 
-BUDGETS=(16,32,50,64,128,256,512)
-ACTIONS=tuple((mode,k) for k in BUDGETS for mode in ("recent","semantic"))+(("recent",2048),)
+ORIGINAL_BUDGETS=(0,1,5,10,20,50,100,2048)
+EXPLORATORY_BUDGETS=(16,32,64,128,256,512)
+BUDGETS=tuple(sorted(set(ORIGINAL_BUDGETS+EXPLORATORY_BUDGETS)-{0,2048}))
+ACTIONS=(("recent",0),)+tuple((mode,k) for k in BUDGETS for mode in ("recent","semantic"))+(("recent",2048),)
+GRIDS=("original","extended")
+
+def grid_mask(grid):
+    if grid not in GRIDS:raise ValueError("Invalid action grid")
+    return np.asarray([grid=="extended" or k in ORIGINAL_BUDGETS for _,k in ACTIONS])
 ACTION_NAMES=tuple(f"{m}_{k}" for m,k in ACTIONS)
 QUALITY_SCALE=.01
 PROFILES=(0.,.25,.5,.75,.9,.95,.99,1.)
@@ -15,7 +22,7 @@ DEFAULT_COST_WEIGHTS=(1.,1.,1.)
 TOKEN_MACS=6288
 HEAD_MACS=21696
 
-def preference(quality_weight=.9,cost_weight=None,cost_weights=DEFAULT_COST_WEIGHTS,max_read_tokens=2048,max_linear_macs=None):
+def preference(quality_weight=.9,cost_weight=None,cost_weights=DEFAULT_COST_WEIGHTS,max_read_tokens=2048,max_linear_macs=None,grid="original",max_logical_bytes=None):
     if cost_weight is None:cost_weight=1-float(quality_weight)
     vals=np.asarray([quality_weight,cost_weight],dtype=float)
     cw=np.asarray(cost_weights,dtype=float)
@@ -23,9 +30,11 @@ def preference(quality_weight=.9,cost_weight=None,cost_weights=DEFAULT_COST_WEIG
         raise ValueError("Weights must be finite nonnegative, with positive sum")
     if type(max_read_tokens) is not int or not 0<=max_read_tokens<=2048:raise ValueError("Invalid max_read_tokens")
     if max_linear_macs is not None and (type(max_linear_macs) is not int or max_linear_macs<0):raise ValueError("Invalid max_linear_macs")
+    grid_mask(grid)
+    if max_logical_bytes is not None and (type(max_logical_bytes) is not int or max_logical_bytes<0):raise ValueError("Invalid max_logical_bytes")
     vals/=vals.sum();cw/=cw.sum()
     return dict(quality_weight=float(vals[0]),cost_weight=float(vals[1]),cost_weights=cw.tolist(),
-        max_read_tokens=max_read_tokens,max_linear_macs=max_linear_macs)
+        max_read_tokens=max_read_tokens,max_linear_macs=max_linear_macs,grid=grid,max_logical_bytes=max_logical_bytes)
 
 def resource_table(n,dim=32,compact=True,selector=True):
     n=np.asarray(n,dtype=np.int64).reshape(-1)
@@ -43,7 +52,8 @@ def choose(regrets,resources,pref):
     regrets=np.asarray(regrets,dtype=float)
     if regrets.shape!=resources.shape[:2] or not np.isfinite(regrets).all():raise ValueError("Invalid quality estimates")
     cost=cost_table(resources,pref)
-    feasible=resources[:,:,0]<=pref["max_read_tokens"]
+    feasible=(resources[:,:,0]<=pref["max_read_tokens"]) & grid_mask(pref["grid"])[None,:]
+    if pref["max_logical_bytes"] is not None:feasible &= resources[:,:,1]<=pref["max_logical_bytes"]
     if pref["max_linear_macs"] is not None:feasible &= resources[:,:,2]<=pref["max_linear_macs"]
     if not feasible.any(1).all():raise ValueError("No feasible history action under requested constraints")
     utility=pref["quality_weight"]*regrets/QUALITY_SCALE+pref["cost_weight"]*cost
