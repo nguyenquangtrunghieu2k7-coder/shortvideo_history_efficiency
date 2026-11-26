@@ -8,6 +8,9 @@ import subprocess
 import sys
 import time
 import hashlib
+import os
+import platform
+import resource
 import numpy as np
 import pandas as pd
 import torch
@@ -30,7 +33,7 @@ def main():
     a=p.parse_args()
     if min(a.epochs,a.batch_size,a.repeats)<1 or a.sample<0:p.error("Invalid arguments")
     product.credentials();d=a.run_dir.resolve();d.mkdir(parents=True,exist_ok=True)
-    config=dict(epochs=a.epochs,batch_size=a.batch_size,repeats=a.repeats,seed=a.seed,sample=a.sample,
+    config=dict(dataset_root=str(product.baseline.PROCESSED_DIR),device=str(product.baseline.get_device()),epochs=a.epochs,batch_size=a.batch_size,repeats=a.repeats,seed=a.seed,sample=a.sample,
         git_commit=subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),
         inputs={str(f):_sha(f) for f in (product.baseline.VIDEO_VOCAB_FILE,
             product.baseline.PROCESSED_DIR/"train.parquet",
@@ -78,6 +81,13 @@ def main():
             **json.loads(marker.read_text())))
         for row in report["rows"]:results.append(dict(encoding=name,**row))
         del engine
+    from src.integration.m4_shared_ablation import run as shared_run
+    from src.integration.m4_bloom_ablation import run as bloom_run
+    shared=shared_run(d,ck,a.epochs,a.batch_size,a.seed,a.sample)
+    secret,_=product.credentials()
+    int8_bundle=product.joblib.load(d/"int8.joblib")
+    bloom=bloom_run(d/"snapshots",int8_bundle["snapshot_id"],secret,d/"bloom_ablation.csv",a.seed)
+    dump(d/"shared_weights.json",shared)
     frame=pd.DataFrame(results)
     frame.to_csv(d/"policy_comparison.csv",index=False)
     pd.DataFrame(index_rows).to_csv(d/"index_comparison.csv",index=False)
@@ -96,6 +106,10 @@ def main():
         index_comparison=index_rows,scope="local HTTP; existing frozen disjoint history dataset; test reused for exploratory M4 assessment",
         unfinished=["point-in-time content metadata provenance and model integration","dynamic micro-batching",
             "open-loop burst and cold-start workload","physical disk IO and complete FLOPs accounting"])
+    summary["environment"]={"platform":platform.platform(),"device":str(product.baseline.get_device()),"cpu_count":os.cpu_count(),"torch_version":str(torch.__version__),"scope":"local loopback; no cloud claims"}
+    summary["shared_weights"]=shared["deployments"]
+    summary["lazy_vs_eager"]={k:float(compact.loc["adaptive",k]/max(compact.loc["adaptive_eager",k],1e-12)) for k in ("mean_read_tokens","p95_ms","cpu_seconds")}
+    summary["fused_vs_pipeline"]={k:float(compact.loc["adaptive",k]/max(compact.loc["adaptive_pipeline",k],1e-12)) for k in ("mean_selector_ms","p95_ms","cpu_seconds")}
     dump(d/"summary.json",summary)
     cols=["encoding","policy","auc","gauc","mean_read_tokens","mean_linear_macs","p95_ms","throughput_rps"]
     table=frame[cols].round(6)
@@ -110,6 +124,12 @@ def main():
     text+="## Why these scenarios\n\nResidual-only isolates the new model capacity; behavior adds co-occurrence vectors; behavior+distill adds a stopped-gradient full-history teacher. FP32 vs INT8 changes summary encoding and recalibrates the selector, so policy quality differences are joint effects. Full/fixed/random/semantic/adaptive/prune/merge/hybrid compare history operators with one checkpoint. Adaptive exact checks Bloom parity.\n\n"
     text+="## Acceptance targets\n\n"+md(pd.DataFrame([{"gate":k,"met":v} for k,v in gates.items()]))+"\n\n"
     text+="Execution PASS does not mean research targets passed. Timing is loopback single-request; linear MACs and logical bytes are partial cost accounting. Test has been previously inspected; confirmatory claims require a new independent holdout.\n"
+    text+="\n## Shared weights (matched architecture)\n\n"+md(pd.DataFrame(shared["rows"])[["training","k","auc","gauc","delta_auc_vs_specialist","ci95_vs_specialist"]].round(5))+"\n\n"+md(pd.DataFrame(shared["deployments"]).round(4))+"\n\n"
+    text+="Independent models specialize per budget; full-only tests truncation without variable-budget training; shared tests one checkpoint trained across budgets. Tensor footprint is not process RAM.\n\n"
+    text+="## Bloom utility (actual local storage)\n\n"+md(pd.DataFrame(bloom)[["missing_fraction","mode","mean_exact_lookups","p95_local_ms","false_positives","filter_bytes","serial_rtt_2ms_mean_estimate"]].round(5))+"\n\n"
+    text+="Known-shard routing and fan-out are different workloads. Remote RTT estimates assume serial lookups; they are sensitivity models, not measured cloud latency.\n\n"
+    text+="## Lazy retrieval and selector optimization\n\n"+md(compact.reset_index().loc[lambda f:f.policy.isin(["adaptive","adaptive_eager","adaptive_pipeline"]),["policy","auc","mean_read_tokens","mean_k","mean_selector_ms","cpu_seconds","p95_ms"]].round(6))+"\n\n"
+    text+="Eager reads all tokens before selecting the same positions; pipeline uses the original sklearn selector instead of fused linear inference. Both must match adaptive predictions. CPU time includes client and server in one process. Peak RSS is process lifetime high-water mark, not per-policy memory.\n"
     (d/"REPORT.md").write_text(text)
     print(table.to_string(index=False));print(json.dumps(summary,indent=2));print("REPORT:",d/"REPORT.md")
 
