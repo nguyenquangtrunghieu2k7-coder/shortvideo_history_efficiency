@@ -29,7 +29,7 @@ def arrays(model,ds,device,emb,ue):
     X=np.asarray([s.feature_vector(len(h),b,emb[c],ue[u%len(ue)]) for h,b,c,u in zip(ds.history_ids,blocks,ds.candidate_ids,ds.user_ids)])
     probs=[]
     for mode,k in s.ACTIONS:
-        if mode=="recent":hist=[h[-k:] for h in ds.history_ids]
+        if mode=="recent":hist=[h[-k:] if k else [] for h in ds.history_ids]
         else:hist=[[h[j] for a,b in p.semantic_ranges(bl,emb[c],k) for j in range(a,b)] for h,bl,c in zip(ds.history_ids,blocks,ds.candidate_ids)]
         probs.append(p.predict_batch(model,ds,hist,device))
         print("OFFLINE ACTION",mode,k,flush=True)
@@ -37,7 +37,8 @@ def arrays(model,ds,device,emb,ue):
 
 def pick_fixed(probs,y,res,target,pref):
     costs=s.cost_table(res,pref).mean(0)
-    caps=(res[:,:,0]<=pref["max_read_tokens"]).all(0)
+    caps=(res[:,:,0]<=pref["max_read_tokens"]).all(0)&s.grid_mask(pref["grid"])
+    if pref["max_logical_bytes"] is not None:caps &= (res[:,:,1]<=pref["max_logical_bytes"]).all(0)
     if pref["max_linear_macs"] is not None:caps &= (res[:,:,2]<=pref["max_linear_macs"]).all(0)
     valid=np.flatnonzero(caps)
     if not len(valid):raise ValueError("No fixed action fits cap")
@@ -203,6 +204,11 @@ def main():
         target_cost=float(s.cost_table(resources[cal],pref)[j,a].mean())
         fixed=pick_fixed(P[cal],y[cal],s.resource_table(N[cal],selector=False),target_cost,pref)
         plans.append((name,pref,fixed))
+    for w in s.PROFILES:
+        pref=s.preference(w,grid="extended");a=s.choose(predcal,resources[cal],pref);j=np.arange(cal.sum())
+        target_cost=float(s.cost_table(resources[cal],pref)[j,a].mean())
+        fixed=pick_fixed(P[cal],y[cal],s.resource_table(N[cal],selector=False),target_cost,pref)
+        plans.append((f"extended_q{w:g}",pref,fixed))
     (d/"frozen_plan.json").write_text(json.dumps(dict(selected_model=winner,profiles=[dict(name=name,preferences=pref,fixed_comparator=s.ACTION_NAMES[fixed]) for name,pref,fixed in plans]),indent=2))
     Xt,Pt,Nt=arrays(model,test,device,emb,ue)
     yt=np.asarray(test.labels);ut=np.asarray(test.user_ids);rt=s.resource_table(Nt);rf=s.resource_table(Nt,selector=False)
@@ -211,7 +217,7 @@ def main():
     for j,name in enumerate(s.ACTION_NAMES):
         ix=np.full(len(yt),j)
         rows.append(metric(name,ix,Pt,yt,ut,Nt,rf,default,args.bootstrap,reference))
-        if name in ("recent_16","semantic_16","recent_50","recent_2048"):
+        if name in ("recent_0","recent_5","recent_16","semantic_16","recent_50","recent_2048"):
             http_actions[name]=ix;http_prefs[name]=None
     comparisons=[];scores={}
     for name,pref,fixed in plans:
@@ -219,7 +225,7 @@ def main():
         ar=metric(name,ix,Pt,yt,ut,Nt,rt,pref,args.bootstrap,reference)
         nr=metric(name+"_context_free",neutral,Pt,yt,ut,Nt,rt,pref,args.bootstrap,reference)
         fr=metric(name+"_fixed",fi,Pt,yt,ut,Nt,rf,pref,args.bootstrap,reference)
-        for row in (ar,nr,fr):row["quality_weight"]=pref["quality_weight"];row["cost_weight"]=pref["cost_weight"];row["max_read_tokens"]=pref["max_read_tokens"]
+        for row in (ar,nr,fr):row["quality_weight"]=pref["quality_weight"];row["cost_weight"]=pref["cost_weight"];row["max_read_tokens"]=pref["max_read_tokens"];row["grid"]=pref["grid"]
         rows.extend((ar,nr,fr));j=np.arange(len(yt))
         scores[name]=Pt[j,ix]
         comparisons.append(dict(profile=name,fixed_action=s.ACTION_NAMES[fixed],adaptive_auc=ar["auc"],fixed_auc=fr["auc"],
@@ -228,7 +234,7 @@ def main():
             adaptive_cost=ar["mean_normalized_cost"],fixed_cost=fr["mean_normalized_cost"],context_free_cost=nr["mean_normalized_cost"],
             adaptive_mean_k=ar["mean_read_tokens"],fixed_mean_k=fr["mean_read_tokens"],context_free_mean_k=nr["mean_read_tokens"]))
         for act,count in ar["action_histogram"].items():hist.append(dict(profile=name,action=act,requests=count))
-        if name in ("q0","q0.5","q0.9","q0.99","q1","q0.9_cap50","q0.9_io","q0.9_compute","q0.99_mac_cap50"):
+        if name in ("q0","q0.5","q0.9","q0.99","q1","q0.9_cap50","q0.9_io","q0.9_compute","q0.99_mac_cap50","extended_q0.9","extended_q0.99"):
             http_actions[name]=ix;http_prefs[name]=pref
     pd.DataFrame(rows).to_csv(d/"quality_cost_frontier.csv",index=False)
     pd.DataFrame(comparisons).to_csv(d/"matched_fixed_comparison.csv",index=False)
@@ -238,10 +244,14 @@ def main():
     chosen=[s.choose(estimate,rt,s.preference(w)) for w in s.PROFILES]
     costs=np.column_stack([s.cost_table(rt,s.preference(w))[np.arange(len(yt)),a] for w,a in zip(s.PROFILES,chosen)])
     if np.any(np.diff(costs,axis=1)<-1e-8):raise RuntimeError("Preference monotonicity failed")
+    for grid in s.GRIDS:
+        chosen=[s.choose(estimate,rt,s.preference(w,grid=grid)) for w in s.PROFILES]
+        costs=np.column_stack([s.cost_table(rt,s.preference(w,grid=grid))[np.arange(len(yt)),a] for w,a in zip(s.PROFILES,chosen)])
+        if np.any(np.diff(costs,axis=1)<-1e-8):raise RuntimeError("Grid preference monotonicity failed: "+grid)
     del model,emb,ue
     engine=Engine(args);http=http_check(args,engine,test,Pt,http_actions,http_prefs)
     pd.DataFrame(http).to_csv(d/"http_validation.csv",index=False)
-    report=dict(status="EXECUTION_PASS",selected_model=winner,requests=len(yt),fit_requests=int(fit.sum()),calibration_requests=int(cal.sum()),
+    report=dict(original_budgets=s.ORIGINAL_BUDGETS,extended_budgets=tuple(sorted(set(s.ORIGINAL_BUDGETS+s.EXPLORATORY_BUDGETS))),status="EXECUTION_PASS",selected_model=winner,requests=len(yt),fit_requests=int(fit.sum()),calibration_requests=int(cal.sum()),
         checkpoint_sha256=_sha(ck),snapshot_id=bundle["snapshot_id"],quality_scale=s.QUALITY_SCALE,actions=s.ACTION_NAMES,
         validation_models=validation,profiles=comparisons,monotonic_cost=True,http_prediction_parity=True,
         caveats=["Test previously inspected: exploratory only.","Expected BCE regret is a surrogate, not per-request AUC.",
