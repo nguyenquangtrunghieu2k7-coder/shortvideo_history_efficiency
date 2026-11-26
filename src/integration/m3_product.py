@@ -207,6 +207,13 @@ class Engine:
         return dict(score=prob,history_length=n,budget=k,read_tokens=len(h),model_tokens=used,
                     linear_macs=macs,storage=dict(stats),timing=dict(timing),server_ms=(perf_counter()-start)*1000)
 
+class RecommendationHTTPServer(ThreadingHTTPServer):
+    """Bounded local HTTP service with sufficient concurrent accept backlog."""
+    request_queue_size=128
+    daemon_threads=True
+    block_on_close=False
+
+
 def make_server(engine,token,port):
     class Handler(BaseHTTPRequestHandler):
         protocol_version="HTTP/1.1"
@@ -235,7 +242,7 @@ def make_server(engine,token,port):
             except (ValueError,TypeError):return self.reply(400,{"error":"invalid_request"})
             except Exception:return self.reply(503,{"error":"scoring_unavailable"})
             return self.reply(200,out)
-    return ThreadingHTTPServer(("127.0.0.1",port),Handler)
+    return RecommendationHTTPServer(("127.0.0.1",port),Handler)
 
 def events_only():
     _,vmap=baseline.load_video_vocab()
