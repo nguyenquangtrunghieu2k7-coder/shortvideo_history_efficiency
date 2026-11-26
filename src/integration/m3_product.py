@@ -252,7 +252,13 @@ def make_server(engine,token,port,host="127.0.0.1"):
         def reply(self,status,payload):
             b=json.dumps(payload,separators=(",",":"),allow_nan=False).encode()
             self.send_response(status);self.send_header("Content-Type","application/json")
-            self.send_header("Content-Length",str(len(b)));self.end_headers();self.wfile.write(b)
+            self.send_header("Content-Length",str(len(b)))
+            # Error responses can precede consumption of the request body.
+            # Never reuse a stream containing unread bytes.
+            if status>=400:
+                self.close_connection=True
+                self.send_header("Connection","close")
+            self.end_headers();self.wfile.write(b)
         def authorized(self):
             return hmac.compare_digest(self.headers.get("Authorization",""),"Bearer "+token)
         def do_GET(self):
