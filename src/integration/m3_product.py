@@ -266,9 +266,13 @@ def make_server(engine,token,port):
                 size=int(self.headers.get("Content-Length","0"))
                 if not 0<size<=8192:raise ValueError()
                 p=json.loads(self.rfile.read(size))
-                if set(p)!={"history_key","candidate_id","user_id","policy"}:raise ValueError()
+                required={"history_key","candidate_id","user_id","policy"}
+                if not required.issubset(p) or set(p)-required-{"preferences"}:raise ValueError()
+                if "preferences" in p and (not hasattr(engine,"score_with_preference") or not isinstance(p["preferences"],dict)):raise ValueError()
                 if type(p["candidate_id"]) is not int or type(p["user_id"]) is not int or not isinstance(p["history_key"],str) or len(p["history_key"])>128:raise ValueError()
-                out=engine.score(p["history_key"],p["candidate_id"],p["user_id"],p["policy"])
+                if "preferences" in p:
+                    out=engine.score_with_preference(p["history_key"],p["candidate_id"],p["user_id"],p["policy"],p["preferences"])
+                else:out=engine.score(p["history_key"],p["candidate_id"],p["user_id"],p["policy"])
             except KeyError:return self.reply(404,{"error":"history_not_found"})
             except (ValueError,TypeError):return self.reply(400,{"error":"invalid_request"})
             except Exception:return self.reply(503,{"error":"scoring_unavailable"})
