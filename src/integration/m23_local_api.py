@@ -22,7 +22,9 @@ MAX_URL = 4096
 MAX_KEY = 256
 
 
-def make_handler(root, hmac_key, api_token):
+def make_handler(root, hmac_key, api_token, retrieval_mode="indexed_bloom"):
+    if retrieval_mode not in ("indexed_exact", "indexed_bloom", "sharded_bloom", "sharded_exact"):
+        raise ValueError("Invalid retrieval mode")
     if len(api_token) < 32:
         raise ValueError("API token must have at least 32 characters")
 
@@ -30,6 +32,7 @@ def make_handler(root, hmac_key, api_token):
     with open_active(root, hmac_key) as verified:
         snapshot_id = verified.manifest["snapshot_id"]
         shard_count = verified.shards
+        blooms = tuple(verified.blooms)
     snapshot_dir = Path(root) / snapshot_id
 
     class Handler(BaseHTTPRequestHandler):
@@ -43,11 +46,14 @@ def make_handler(root, hmac_key, api_token):
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            if getattr(self, "retrieval_stats", None) is not None:
+                self.send_header("X-History-Retrieval", json.dumps(self.retrieval_stats, separators=(",", ":")))
             self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self.wfile.write(body)
 
         def do_GET(self):
+            self.retrieval_stats = None
             if len(self.path) > MAX_URL:
                 return self._reply(414, {"error": "uri_too_long"})
             token = self.headers.get("Authorization", "")
@@ -75,14 +81,35 @@ def make_handler(root, hmac_key, api_token):
                 return self._reply(400, {"error": "invalid_k"})
             try:
                 shard = int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big") % shard_count
-                db = snapshot_dir / f"shard_{shard}.sqlite"
-                with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True) as conn:
-                    row = conn.execute("SELECT payload FROM histories WHERE key=?", (key,)).fetchone()
-                history = None if row is None else json.loads(row[0])
+                candidates = [shard] if retrieval_mode.startswith("indexed") else range(shard_count)
+                history = None
+                probes = skipped = lookups = false_positives = fallbacks = 0
+                for i in candidates:
+                    bloom = blooms[i]
+                    if retrieval_mode.endswith("bloom"):
+                        if bloom is None:
+                            fallbacks += 1
+                        else:
+                            probes += 1
+                            if not bloom.might_contain(key):
+                                skipped += 1
+                                continue
+                    db = snapshot_dir / f"shard_{i}.sqlite"
+                    lookups += 1
+                    with sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True) as conn:
+                        row = conn.execute("SELECT payload FROM histories WHERE key=?", (key,)).fetchone()
+                    if row is None:
+                        if retrieval_mode.endswith("bloom") and bloom is not None:
+                            false_positives += 1
+                        continue
+                    if history is not None:
+                        raise ValueError("Duplicate history key")
+                    history = json.loads(row[0])
                 if history is not None:
                     history = history if k == "Full" else (history[-k:] if k else [])
             except (OSError, ValueError, KeyError, sqlite3.Error, json.JSONDecodeError):
                 return self._reply(503, {"error": "snapshot_unavailable"})
+            self.retrieval_stats = {"mode": retrieval_mode, "bloom_probes": probes, "shards_skipped": skipped, "sqlite_lookups": lookups, "false_positives": false_positives, "bloom_fallbacks": fallbacks}
             if history is None:
                 return self._reply(404, {"error": "history_not_found"})
             return self._reply(200, {"key": key, "k": raw_k, "history": history})
@@ -104,10 +131,10 @@ class HistoryHTTPServer(ThreadingHTTPServer):
     block_on_close = False
 
 
-def create_server(root, hmac_key, api_token, host="127.0.0.1", port=8765):
+def create_server(root, hmac_key, api_token, host="127.0.0.1", port=8765, retrieval_mode="indexed_bloom"):
     if host not in ("127.0.0.1", "::1"):
         raise ValueError("M2.3E preview only binds to loopback")
-    handler = make_handler(Path(root), hmac_key, api_token)
+    handler = make_handler(Path(root), hmac_key, api_token, retrieval_mode)
     return HistoryHTTPServer((host, port), handler)
 
 
@@ -115,6 +142,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--root", type=Path, default=Path("data/processed/m23_snapshots"))
     p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--retrieval-mode", choices=["indexed_exact", "indexed_bloom", "sharded_exact", "sharded_bloom"], default="indexed_bloom")
     args = p.parse_args()
     try:
         secret = bytes.fromhex(os.environ.get("M23_HMAC_KEY_HEX", ""))
@@ -125,7 +153,7 @@ def main():
     token = os.environ.get("M23_API_TOKEN", "")
     if len(token) < 32:
         raise SystemExit("M23_API_TOKEN must contain at least 32 characters")
-    server = create_server(args.root, secret, token, port=args.port)
+    server = create_server(args.root, secret, token, port=args.port, retrieval_mode=args.retrieval_mode)
     print(f"Local history API listening on http://127.0.0.1:{args.port}", flush=True)
     try:
         server.serve_forever(poll_interval=0.2)
