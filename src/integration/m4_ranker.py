@@ -36,7 +36,7 @@ class Ranker(nn.Module):
         def compact(x,p,w):
             keep=w.detach()>0
             n=max(1,int(keep.sum(1).max().item()))
-            ix=(~keep).long().argsort(1,stable=True)[:,:n]
+            ix=(~keep).long().argsort(dim=1,stable=True)[:,:n]
             return x.gather(1,ix[...,None].expand(-1,-1,self.d)),p.gather(1,ix),w.gather(1,ix)
         if mode in ("prune","hybrid"):
             logits=self.gate(feat(x,pos)).squeeze(-1)
