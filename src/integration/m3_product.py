@@ -45,14 +45,20 @@ def credentials():
 def load_model(path,device):
     ck=torch.load(path,map_location="cpu",weights_only=True)
     if ck["vocab_sha256"]!=_sha(baseline.VIDEO_VOCAB_FILE):raise ValueError("Vocabulary changed")
-    m=Ranker(ck["vocab_size"],ck["dim"]);m.load_state_dict(ck["state"]);m.eval()
+    if ck.get("architecture")=="m4":
+        from src.integration.m4_ranker import Ranker as Model
+    else:Model=Ranker
+    m=Model(ck["vocab_size"],ck["dim"]);m.load_state_dict(ck["state"]);m.eval()
     return m.to(device)
 
 def sync(device):
     if device.type=="cuda":torch.cuda.synchronize()
     elif device.type=="mps":torch.mps.synchronize()
 
-def summaries(h,emb):
+def summaries(h,emb,compact=False):
+    from src.integration.m3_store import quantize_centroid
+    if compact:
+        return [[j,min(j+BLOCK,len(h)),quantize_centroid(emb[h[j:j+BLOCK]].mean(0)).tolist()] for j in range(0,len(h),BLOCK)]
     return [[j,min(j+BLOCK,len(h)),emb[h[j:j+BLOCK]].mean(0).tolist()]
             for j in range(0,len(h),BLOCK)]
 
@@ -92,11 +98,11 @@ def predict_batch(model,ds,histories,device,mode="recent",budget=50,batch=64):
             scores.extend(torch.sigmoid(z).cpu().tolist())
     return np.asarray(scores)
 
-def calibrate(model,ds,device,tolerance=.01):
+def calibrate(model,ds,device,tolerance=.01,compact=False):
     emb=model.item.weight.detach().cpu().numpy()
     ue=model.user.weight.detach().cpu().numpy()
     histories=ds.history_ids
-    blocks=[summaries(h,emb) for h in histories]
+    blocks=[summaries(h,emb,compact) for h in histories]
     X=np.asarray([features(len(h),b,emb[c],ue[u%len(ue)]) for h,b,c,u in zip(histories,blocks,ds.candidate_ids,ds.user_ids)])
     pred=[]
     for k in BUDGETS:
@@ -136,11 +142,12 @@ def prepare(args):
     val=baseline.KuaiRandDataset("validation","Full",vmap)
     test=baseline.KuaiRandDataset("test","Full",vmap)
     if set(val.evaluation_ids)&set(test.evaluation_ids):raise ValueError("Split overlap")
-    selector=calibrate(model,val,device)
+    compact=getattr(args,"compact",False)
+    selector=calibrate(model,val,device,compact=compact)
     sha=_sha(args.checkpoint)
     emb=model.item.weight.detach().cpu().numpy()
     sid=build(args.root,((str(e),h) for ds in (val,test) for e,h in zip(ds.evaluation_ids,ds.history_ids)),
-              emb,secret,block=BLOCK,metadata={"checkpoint_sha256":sha,"vocab_sha256":_sha(baseline.VIDEO_VOCAB_FILE)})
+              emb,secret,block=BLOCK,compact=compact,metadata={"checkpoint_sha256":sha,"vocab_sha256":_sha(baseline.VIDEO_VOCAB_FILE)})
     selector.update(snapshot_id=sid,checkpoint_sha256=sha)
     args.bundle.parent.mkdir(parents=True,exist_ok=True)
     tmp=args.bundle.with_suffix(".tmp");joblib.dump(selector,tmp);tmp.replace(args.bundle)
@@ -158,6 +165,11 @@ class Engine:
         self.emb=self.model.item.weight.detach().cpu().numpy()
         self.ue=self.model.user.weight.detach().cpu().numpy()
         self.lock=threading.Lock()
+        self.is_m4=hasattr(self.model.item,"residual")
+        reg=self.bundle["regressor"]
+        scaler, ridge=reg.steps[0][1],reg.steps[1][1]
+        self.selector_w=ridge.coef_/scaler.scale_[None,:]
+        self.selector_b=ridge.intercept_-self.selector_w@scaler.mean_
         self.macs=0
         for layer in self.model.modules():
             if isinstance(layer,torch.nn.Linear):
@@ -166,25 +178,25 @@ class Engine:
         self.macs+=out.numel()*layer.in_features
     def score(self,key,c,u,policy):
         start=perf_counter();stats=Counter();timing=Counter()
-        if policy not in POLICIES or not 0<c<len(self.emb) or u<0:raise ValueError("Invalid request")
+        if policy not in (POLICIES+("hybrid",) if self.is_m4 else POLICIES) or not 0<c<len(self.emb) or u<0:raise ValueError("Invalid request")
         mode="indexed_exact" if policy=="adaptive_exact" else "indexed_bloom"
         def lookup(op,**kwargs):
             t=perf_counter();r,s=self.store.lookup(key,op,mode=mode,**kwargs)
             timing["storage_ms"]+=(perf_counter()-t)*1000;stats.update(s)
             if r is None:raise KeyError("History not found")
             return r
-        semantic=policy in ("semantic50","adaptive","adaptive_exact","prune","merge")
+        semantic=policy in ("semantic50","adaptive","adaptive_exact","prune","merge","hybrid")
         meta=lookup("summaries" if semantic else "meta");n=meta["n"]
         t=perf_counter();q=self.emb[c];usr=self.ue[u%len(self.ue)]
         if policy=="full":k=n
         elif policy in ("fixed50","random50","semantic50"):k=min(n,50)
         else:
             f=features(n,meta["blocks"],q,usr)[None,:]
-            regret=self.bundle["regressor"].predict(f)[0]
+            regret=(self.selector_w@f[0]+self.selector_b) if self.is_m4 else self.bundle["regressor"].predict(f)[0]
             costs=np.minimum(n,np.asarray(BUDGETS))/50.
             k=min(n,BUDGETS[int(np.argmin(regret+self.bundle["penalty"]*costs))])
         read_budget=k
-        if policy in ("prune","merge"):read_budget=min(n,max(k,2*k),512)
+        if policy in ("prune","merge","hybrid"):read_budget=min(n,max(k,2*k),512)
         if semantic:ranges=semantic_ranges(meta["blocks"],q,read_budget)
         elif policy=="random50":
             ranges=positions_to_ranges(random.Random(key).sample(range(n),k))
@@ -199,7 +211,7 @@ class Engine:
             self.macs=0
             C=torch.tensor([c],device=d);U=torch.tensor([u],device=d)
             H=torch.tensor([h or [0]],device=d);M=H.ne(0)
-            op="prune" if policy == "prune" and k else "merge" if policy=="merge" else "recent"
+            op=policy if policy in ("prune","merge","hybrid") and k else "recent"
             z,_,count=self.model(C,U,H,M,op,max(k,1))
             prob=float(torch.sigmoid(z).cpu().item());used=int(count.cpu().item());macs=self.macs
             sync(d)
@@ -268,7 +280,7 @@ def evaluate(args,engine):
     server=make_server(engine,token,0);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
     conn=http.client.HTTPConnection("127.0.0.1",server.server_port,timeout=60)
     rows=[];scores={};trials=defaultdict(list)
-    policies=list(POLICIES)
+    policies=list(POLICIES)+(["hybrid"] if engine.is_m4 else [])
     def request(row,policy):
         payload=json.dumps(dict(history_key=str(int(row.evaluation_id)),candidate_id=int(row.candidate),user_id=int(row.user_id),policy=policy))
         start=perf_counter()
