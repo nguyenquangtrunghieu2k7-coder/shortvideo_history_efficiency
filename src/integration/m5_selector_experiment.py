@@ -64,8 +64,17 @@ class Engine(p.Engine):
         if self.store.manifest.get("centroid_encoding")!="int8_unit" or self.policy_model["actions"]!=s.ACTIONS or self.policy_model["checkpoint_sha256"]!=_sha(args.checkpoint) or self.policy_model["snapshot_id"]!=self.bundle["snapshot_id"]:
             raise ValueError("Selector binding mismatch")
     def score(self,key,c,u,policy):
+        if getattr(self,"business_policy",None) is not None:
+            if policy!="preference":raise ValueError("Managed service accepts preference policy only")
+            doc,error=self.business_policy.get()
+            out=self._score(key,c,u,policy,doc["preferences"])
+            out.update(policy_revision=doc["revision"],policy_reload_error=error is not None)
+            return out
         return self.score_with_preference(key,c,u,policy,{})
     def score_with_preference(self,key,c,u,policy,options):
+        if getattr(self,"business_policy",None) is not None:raise ValueError("Caller overrides disabled in managed service")
+        return self._score(key,c,u,policy,options)
+    def _score(self,key,c,u,policy,options):
         if policy!="preference" and policy not in s.ACTION_NAMES:raise ValueError("Unknown M5 policy")
         if not 0<c<len(self.emb) or u<0:raise ValueError("Invalid request")
         if policy!="preference" and options:raise ValueError("Preferences only apply to adaptive policy")
@@ -140,6 +149,8 @@ def main():
     parser.add_argument("--bootstrap",type=int,default=1000)
     parser.add_argument("--serve",action="store_true")
     parser.add_argument("--port",type=int,default=8778)
+    parser.add_argument("--policy-file",type=Path)
+    parser.add_argument("--bind",default="127.0.0.1")
     args=parser.parse_args()
     if min(args.http_sample,args.bootstrap)<1:parser.error("Invalid sample/bootstrap")
     d=args.output.resolve();d.mkdir(parents=True,exist_ok=True)
@@ -147,8 +158,12 @@ def main():
     ck=m4/(summary["selected_on_validation"]+".pt")
     args.checkpoint=ck;args.root=m4/"snapshots";args.bundle=m4/"int8.joblib";args.selector=d/"selector.joblib"
     if args.serve:
-        _,token=p.credentials();server=p.make_server(Engine(args),token,args.port)
-        print(f"M5 preference-aware service listening on 127.0.0.1:{args.port}",flush=True)
+        from src.integration.m5_policy import PolicyStore
+        _,token=p.credentials();engine=Engine(args)
+        if args.policy_file is None:parser.error("--serve requires --policy-file")
+        engine.business_policy=PolicyStore(args.policy_file)
+        server=p.make_server(engine,token,args.port,host=args.bind)
+        print(f"M5 preference-aware service listening on {args.bind}:{args.port}",flush=True)
         try:server.serve_forever()
         finally:server.server_close()
         return
