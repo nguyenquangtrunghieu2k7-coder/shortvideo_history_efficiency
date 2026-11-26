@@ -51,6 +51,18 @@ def load_model(path,device):
     m=Model(ck["vocab_size"],ck["dim"]);m.load_state_dict(ck["state"]);m.eval()
     return m.to(device)
 
+def semantic_embeddings(model):
+    base=model.item.weight.detach().cpu().numpy()
+    if not hasattr(model.item,"residual"):return base
+    # Export the identical item representation used by training retrieval.
+    residual=model.item.residual.weight.detach().cpu().numpy()
+    out=base.copy()
+    for lo in range(1,len(out),65536):
+        hi=min(len(out),lo+65536)
+        ids=np.arange(lo,hi,dtype=np.int64)
+        out[lo:hi]+=residual[1+(ids-1)%(len(residual)-1)]
+    return out
+
 def sync(device):
     if device.type=="cuda":torch.cuda.synchronize()
     elif device.type=="mps":torch.mps.synchronize()
@@ -99,7 +111,7 @@ def predict_batch(model,ds,histories,device,mode="recent",budget=50,batch=64):
     return np.asarray(scores)
 
 def calibrate(model,ds,device,tolerance=.01,compact=False):
-    emb=model.item.weight.detach().cpu().numpy()
+    emb=semantic_embeddings(model)
     ue=model.user.weight.detach().cpu().numpy()
     histories=ds.history_ids
     blocks=[summaries(h,emb,compact) for h in histories]
@@ -145,7 +157,7 @@ def prepare(args):
     compact=getattr(args,"compact",False)
     selector=calibrate(model,val,device,compact=compact)
     sha=_sha(args.checkpoint)
-    emb=model.item.weight.detach().cpu().numpy()
+    emb=semantic_embeddings(model)
     sid=build(args.root,((str(e),h) for ds in (val,test) for e,h in zip(ds.evaluation_ids,ds.history_ids)),
               emb,secret,block=BLOCK,compact=compact,metadata={"checkpoint_sha256":sha,"vocab_sha256":_sha(baseline.VIDEO_VOCAB_FILE)})
     selector.update(snapshot_id=sid,checkpoint_sha256=sha)
@@ -162,7 +174,7 @@ class Engine:
         self.store=Store(args.root,self.bundle["snapshot_id"],secret)
         if self.store.manifest["metadata"]["checkpoint_sha256"]!=sha:raise ValueError("Index/checkpoint mismatch")
         self.model=load_model(args.checkpoint,self.device)
-        self.emb=self.model.item.weight.detach().cpu().numpy()
+        self.emb=semantic_embeddings(self.model)
         self.ue=self.model.user.weight.detach().cpu().numpy()
         self.lock=threading.Lock()
         self.is_m4=hasattr(self.model.item,"residual")
