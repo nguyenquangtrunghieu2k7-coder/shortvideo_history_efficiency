@@ -15,6 +15,7 @@ def batch_forward(model,b,device,mode,k):
     c,h,m,y,u,_=[x.to(device) for x in b]
     if mode=="recent":
         # Gather most recent k per example, not the padded right edge.
+        k=min(k,h.shape[1])
         n=m.sum(1).long()
         ix=(n[:,None]-k+torch.arange(k,device=device)).clamp(min=0,max=h.shape[1]-1)
         valid=(torch.arange(k,device=device)[None,:]>=k-n[:,None])
