@@ -41,14 +41,14 @@ def fit_map(P,y):
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dataset",choices=["kuairec","vklsvd"],default="kuairec")
+    ap.add_argument("--dataset",choices=["kuairec","vklsvd","wechat"],default="kuairec")
     ap.add_argument("--source",type=Path)
     ap.add_argument("--output",type=Path)
     a=ap.parse_args();d=(a.output or Path(f"reports/{a.dataset}_calibration_v1")).resolve();src=(a.source or Path(f"reports/{a.dataset}_v1")).resolve();cache=src/"cache"
     if d==src or src.name!=f"{a.dataset}_v1" or d.name!=f"{a.dataset}_calibration_v1":raise ValueError("Use separate dataset-specific calibration output")
     d.mkdir(parents=True,exist_ok=True)
     cc=json.loads((cache/"contract.json").read_text());summary=json.loads((src/"summary.json").read_text())
-    expected={"kuairec":"KuaiRec 2.0 big matrix","vklsvd":"VK-LSVD up0.001_ip0.001 weeks 20-25"}[a.dataset]
+    expected={"kuairec":"KuaiRec 2.0 big matrix","vklsvd":"VK-LSVD up0.001_ip0.001 weeks 20-25","wechat":"WeChat D2Co days 1-14"}[a.dataset]
     if summary["dataset"]!=expected or summary["status"]!="OFFLINE_PASS":raise ValueError("Dataset mismatch")
     if cc["actions"]!=list(NAMES) or cc["checkpoint_sha256"]!=summary["checkpoint_sha256"] or cc["checkpoint_sha256"]!=_sha(src/"behavior.pt"):raise ValueError("Cache provenance mismatch")
     if cc["selector_sha256"]!=_sha(Path(__file__).with_name("m5_selector.py")):raise ValueError("Selector changed")
