@@ -1,4 +1,4 @@
-"""KuaiRec native HTTP benchmark of the frozen raw Global Policy.
+"""KuaiRec or VK-LSVD native HTTP benchmark of the frozen raw Global Policy.
 Reuses the shared M4 checkpoint, offline predictions, and original policy compiler.
 Builds one signed snapshot for the full warm-item test cohort; not a cloud benchmark.
 No training or whole-cohort model inference, no contextual serving claim."""
@@ -17,16 +17,17 @@ from src.integration.kuairec_experiment import read,write,NAMES
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--source",type=Path,default=Path("reports/kuairec_v1"))
-    ap.add_argument("--output",type=Path,default=Path("reports/kuairec_http_v1"))
+    ap.add_argument("--dataset",choices=["kuairec","vklsvd"],default="kuairec")
+    ap.add_argument("--source",type=Path)
+    ap.add_argument("--output",type=Path)
     ap.add_argument("--sample",type=int,default=128)
     ap.add_argument("--workers",type=int,nargs="+",default=[1,4,8])
     ap.add_argument("--repeats",type=int,default=2)
     a=ap.parse_args()
     if min(a.sample,a.repeats,*a.workers)<1:ap.error("Positive counts required")
-    d=a.output.resolve();src=a.source.resolve();cache=src/"cache";data=p.baseline.PROCESSED_DIR
-    if d.name!="kuairec_http_v1" or d==src:raise ValueError("Use isolated KuaiRec HTTP report directory")
-    if data.name!="processed" or data.parent.name!="kuairec":raise ValueError("Set SHORTVIDEO_PROCESSED_DIR to data/kuairec/processed")
+    d=(a.output or Path(f"reports/{a.dataset}_http_v1")).resolve();src=(a.source or Path(f"reports/{a.dataset}_v1")).resolve();cache=src/"cache";data=p.baseline.PROCESSED_DIR
+    if d.name!=f"{a.dataset}_http_v1" or src.name!=f"{a.dataset}_v1" or d==src:raise ValueError("Use isolated dataset HTTP report directory")
+    if data.name!="processed" or data.parent.name!=a.dataset:raise ValueError(f"Set SHORTVIDEO_PROCESSED_DIR to data/{a.dataset}/processed")
     d.mkdir(parents=True,exist_ok=True)
     if (d/"summary.json").exists():raise ValueError("Benchmark already complete; preserve the results")
     ck=src/"behavior.pt";summary=json.loads((src/"summary.json").read_text());cc=json.loads((cache/"contract.json").read_text())
@@ -34,6 +35,8 @@ def main():
     for path,digest in manifest["artifacts"].items():
         if _sha(data/path)!=digest:raise ValueError("Data changed: "+path)
     digest=_sha(ck)
+    expected={"kuairec":"KuaiRec 2.0 big matrix","vklsvd":"VK-LSVD up0.001_ip0.001 weeks 20-25"}[a.dataset]
+    if summary["dataset"]!=expected:raise ValueError("Dataset mismatch")
     if summary["status"]!="OFFLINE_PASS" or digest!=summary["checkpoint_sha256"] or digest!=cc["checkpoint_sha256"] or _sha(mf)!=cc["training"]["adapter_sha256"] or list(NAMES)!=cc["actions"]:raise ValueError("Offline contract mismatch")
     if _sha(Path(__file__).with_name("m5_selector.py"))!=cc["selector_sha256"] or _sha(Path(__file__).with_name("m4_ranker.py"))!=cc["training"]["ranker_sha256"]:raise ValueError("Frozen code mismatch")
     table=json.loads((src/"calibration.json").read_text())
@@ -136,7 +139,7 @@ def main():
                     pd.DataFrame(trials).to_csv(d/"http_trials.csv",index=False)
     finally:server.shutdown();server.server_close();thread.join()
     frame=pd.DataFrame(trials);agg=frame.groupby(["profile","workers"],as_index=False)[["p50_ms","p95_ms","p99_ms","rps","mean_tokens","mean_selector_ms","mean_storage_ms","mean_model_ms"]].median();agg.to_csv(d/"http_comparison.csv",index=False)
-    write(d/"summary.json",dict(status="NATIVE_PASS",dataset="KuaiRec",checkpoint_sha256=digest,snapshot_id=sid,snapshot_scope=snapshot_contract["scope"],platform=platform.platform(),device=str(engine.device),git_commit=subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),test_requests=len(ids),http_requests=int(frame.requests.sum()),gates=dict(parity=True,single_lookup=True,policy_reload=True,invalid_policy_fallback=True,authorization=True,override_rejection=True,hard_caps=True),scope="Local raw Global Policy only; not contextual serving, calibrated serving, Docker, or cloud; snapshot contains test histories only"))
+    write(d/"summary.json",dict(status="NATIVE_PASS",dataset=("KuaiRec" if a.dataset=="kuairec" else "VK-LSVD"),checkpoint_sha256=digest,snapshot_id=sid,snapshot_scope=snapshot_contract["scope"],platform=platform.platform(),device=str(engine.device),git_commit=subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),test_requests=len(ids),http_requests=int(frame.requests.sum()),gates=dict(parity=True,single_lookup=True,policy_reload=True,invalid_policy_fallback=True,authorization=True,override_rejection=True,hard_caps=True),scope="Local raw Global Policy only; not contextual serving, calibrated serving, Docker, or cloud; snapshot contains test histories only"))
     print(agg.to_string(index=False),flush=True)
-    print("KUAIREC_NATIVE_PASS",flush=True)
+    print(a.dataset.upper()+"_NATIVE_PASS",flush=True)
 if __name__=="__main__":main()
