@@ -17,7 +17,7 @@ from src.integration.kuairec_experiment import read,write,NAMES
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dataset",choices=["kuairec","vklsvd"],default="kuairec")
+    ap.add_argument("--dataset",choices=["kuairec","vklsvd","wechat"],default="kuairec")
     ap.add_argument("--source",type=Path)
     ap.add_argument("--output",type=Path)
     ap.add_argument("--sample",type=int,default=128)
@@ -35,7 +35,7 @@ def main():
     for path,digest in manifest["artifacts"].items():
         if _sha(data/path)!=digest:raise ValueError("Data changed: "+path)
     digest=_sha(ck)
-    expected={"kuairec":"KuaiRec 2.0 big matrix","vklsvd":"VK-LSVD up0.001_ip0.001 weeks 20-25"}[a.dataset]
+    expected={"kuairec":"KuaiRec 2.0 big matrix","vklsvd":"VK-LSVD up0.001_ip0.001 weeks 20-25","wechat":"WeChat D2Co days 1-14"}[a.dataset]
     if summary["dataset"]!=expected:raise ValueError("Dataset mismatch")
     if summary["status"]!="OFFLINE_PASS" or digest!=summary["checkpoint_sha256"] or digest!=cc["checkpoint_sha256"] or _sha(mf)!=cc["training"]["adapter_sha256"] or list(NAMES)!=cc["actions"]:raise ValueError("Offline contract mismatch")
     if _sha(Path(__file__).with_name("m5_selector.py"))!=cc["selector_sha256"] or _sha(Path(__file__).with_name("m4_ranker.py"))!=cc["training"]["ranker_sha256"]:raise ValueError("Frozen code mismatch")
@@ -139,7 +139,7 @@ def main():
                     pd.DataFrame(trials).to_csv(d/"http_trials.csv",index=False)
     finally:server.shutdown();server.server_close();thread.join()
     frame=pd.DataFrame(trials);agg=frame.groupby(["profile","workers"],as_index=False)[["p50_ms","p95_ms","p99_ms","rps","mean_tokens","mean_selector_ms","mean_storage_ms","mean_model_ms"]].median();agg.to_csv(d/"http_comparison.csv",index=False)
-    write(d/"summary.json",dict(status="NATIVE_PASS",dataset=("KuaiRec" if a.dataset=="kuairec" else "VK-LSVD"),checkpoint_sha256=digest,snapshot_id=sid,snapshot_scope=snapshot_contract["scope"],platform=platform.platform(),device=str(engine.device),git_commit=subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),test_requests=len(ids),http_requests=int(frame.requests.sum()),gates=dict(parity=True,single_lookup=True,policy_reload=True,invalid_policy_fallback=True,authorization=True,override_rejection=True,hard_caps=True),scope="Local raw Global Policy only; not contextual serving, calibrated serving, Docker, or cloud; snapshot contains test histories only"))
+    write(d/"summary.json",dict(status="NATIVE_PASS",dataset={"kuairec":"KuaiRec","vklsvd":"VK-LSVD","wechat":"WeChat"}[a.dataset],checkpoint_sha256=digest,snapshot_id=sid,snapshot_scope=snapshot_contract["scope"],platform=platform.platform(),device=str(engine.device),git_commit=subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),test_requests=len(ids),http_requests=int(frame.requests.sum()),gates=dict(parity=True,single_lookup=True,policy_reload=True,invalid_policy_fallback=True,authorization=True,override_rejection=True,hard_caps=True),scope="Local raw Global Policy only; not contextual serving, calibrated serving, Docker, or cloud; snapshot contains test histories only"))
     print(agg.to_string(index=False),flush=True)
     print(a.dataset.upper()+"_NATIVE_PASS",flush=True)
 if __name__=="__main__":main()
