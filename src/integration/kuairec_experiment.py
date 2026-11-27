@@ -100,14 +100,14 @@ def paired_auc_ci(y,u,a,b,repeats=500):
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dataset",choices=["kuairec","vklsvd"],default="kuairec")
+    ap.add_argument("--dataset",choices=["kuairec","vklsvd","wechat"],default="kuairec")
     ap.add_argument("--output",type=Path)
     ap.add_argument("--epochs",type=int,default=12)
     ap.add_argument("--batch-size",type=int,default=32)
     ap.add_argument("--inference-batch",type=int,default=32)
     a=ap.parse_args()
     if min(a.epochs,a.batch_size,a.inference_batch)<1:ap.error("positive arguments required")
-    dataset_name={"kuairec":"KuaiRec 2.0 big matrix","vklsvd":"VK-LSVD up0.001_ip0.001 weeks 20-25"}[a.dataset]
+    dataset_name={"kuairec":"KuaiRec 2.0 big matrix","vklsvd":"VK-LSVD up0.001_ip0.001 weeks 20-25","wechat":"WeChat D2Co days 1-14"}[a.dataset]
     d=(a.output or Path(f"reports/{a.dataset}_v1")).resolve();data=p.baseline.PROCESSED_DIR
     if data.name!="processed" or data.parent.name!=a.dataset:raise ValueError(f"Set SHORTVIDEO_PROCESSED_DIR to data/{a.dataset}/processed")
     if d.name!=f"{a.dataset}_v1":raise ValueError(f"Use isolated reports/{a.dataset}_v1")
