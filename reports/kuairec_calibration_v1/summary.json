@@ -1,0 +1,13 @@
+{
+  "status": "CALIBRATION_AUDIT_PASS",
+  "exploratory": true,
+  "slope": 0.17150901845551805,
+  "intercept": -2.0361187555073217,
+  "checkpoint_sha256": "27f0c044be1a169003b35adb9292e97e8bbbcb7074a1eeaec8e9b39729b710eb",
+  "limitations": [
+    "Post-hoc after inspection of KuaiRec test; not independent confirmation.",
+    "One shared monotone mapping fitted on validation-fit users; no ranker retraining.",
+    "Recompiled policies use calibrated BCE with same quality scale; utility across raw and calibrated objectives is not directly comparable.",
+    "Serving remains original raw protocol."
+  ]
+}

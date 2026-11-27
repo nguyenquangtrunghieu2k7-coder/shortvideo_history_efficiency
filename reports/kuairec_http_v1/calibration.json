@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "checkpoint_sha256": "27f0c044be1a169003b35adb9292e97e8bbbcb7074a1eeaec8e9b39729b710eb",
+  "vocab_sha256": "e4cec32541f370d4f2f3e12968e80c55d437ff7d402e80266df21cdd746ffa0b",
+  "fit_requests": 4165,
+  "rows": [
+    {
+      "k": 0,
+      "mean_tokens": 0.0,
+      "mean_bce": 0.37666224111016916,
+      "mean_macs": 27984.0
+    },
+    {
+      "k": 1,
+      "mean_tokens": 1.0,
+      "mean_bce": 0.4231014126510159,
+      "mean_macs": 27984.0
+    },
+    {
+      "k": 5,
+      "mean_tokens": 5.0,
+      "mean_bce": 0.381878999064296,
+      "mean_macs": 53136.0
+    },
+    {
+      "k": 10,
+      "mean_tokens": 10.0,
+      "mean_bce": 0.37447759742229136,
+      "mean_macs": 84576.0
+    },
+    {
+      "k": 20,
+      "mean_tokens": 20.0,
+      "mean_bce": 0.3684667108639083,
+      "mean_macs": 147456.0
+    },
+    {
+      "k": 50,
+      "mean_tokens": 50.0,
+      "mean_bce": 0.3631640725749998,
+      "mean_macs": 336096.0
+    },
+    {
+      "k": 100,
+      "mean_tokens": 100.0,
+      "mean_bce": 0.3573484166595926,
+      "mean_macs": 650496.0
+    },
+    {
+      "k": 2048,
+      "mean_tokens": 1550.8557022809123,
+      "mean_bce": 0.34166422176044453,
+      "mean_macs": 9773476.655942377
+    }
+  ],
+  "snapshot_id": "5efe103f181f4aee8e3877c8e6c70aff"
+}

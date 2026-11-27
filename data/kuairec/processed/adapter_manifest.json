@@ -1,0 +1,73 @@
+{
+  "config": {
+    "source_sha256": "4ee1a72ff9ce4e86ef50525da9dfd7aefcefa717b37c9d570010f689c42f4ef9",
+    "seed": 42,
+    "counts": [
+      30118,
+      6454,
+      6455
+    ],
+    "label": "watch_ratio > 2.0",
+    "schema": 1
+  },
+  "raw_rows": 12530806,
+  "clean_rows": 11562801,
+  "conflict_rows_excluded": 0,
+  "vocab_size": 7882,
+  "cutoffs_ms": [
+    1597007856215,
+    1598745146133
+  ],
+  "splits": {
+    "train": {
+      "raw_events": 8093960,
+      "eligible_events": 8093960,
+      "excluded_cold_items": 0,
+      "sampled": 30118,
+      "positive_rate": 0.07716315824423932,
+      "min_time_ms": 1593353555377,
+      "max_time_ms": 1597007845518,
+      "mean_history": 752.5623547380304,
+      "empty_history": 27,
+      "max_history": 2048
+    },
+    "validation": {
+      "raw_events": 1734420,
+      "eligible_events": 1364269,
+      "excluded_cold_items": 370151,
+      "sampled": 6454,
+      "positive_rate": 0.07390765416795786,
+      "min_time_ms": 1597007864657,
+      "max_time_ms": 1598745115918,
+      "mean_history": 1539.5198326619152,
+      "empty_history": 0,
+      "max_history": 2048
+    },
+    "test": {
+      "raw_events": 1734421,
+      "eligible_events": 1096679,
+      "excluded_cold_items": 637742,
+      "sampled": 6455,
+      "positive_rate": 0.06940356312935708,
+      "min_time_ms": 1598745146746,
+      "max_time_ms": 1599591621385,
+      "mean_history": 1637.7766072811773,
+      "empty_history": 0,
+      "max_history": 2048
+    }
+  },
+  "artifacts": {
+    "video_vocab.parquet": "e4cec32541f370d4f2f3e12968e80c55d437ff7d402e80266df21cdd746ffa0b",
+    "train.parquet": "dd9a494dc1ebda1fb463566441d7b897b91063e86362a8702292a2a97cc5482e",
+    "test.parquet": "f1e3ce196d18ce0828775803716a2468b4f42a9eeda75f7a05516f7efe0f5fd6",
+    "evaluation_events.parquet": "77ec523634201d0c4113722b850f5de35d53b8a92d62cf2c57db1d33d344c2d4",
+    "validation.parquet": "089710eca3bc8d3d660e422105432d0dabdef068bd7fce413d93d5dda1505007",
+    "phase7/history_KFull.parquet": "25c92c7bfb91f1bcb58d9f41cc0a1f1879bcd514eb1f651a6b8834b38ca74440"
+  },
+  "limitations": [
+    "Warm-item targets only; cold-item exclusion reported.",
+    "Observed exposure replay, not randomized exposure or small-matrix protocol.",
+    "Prior validation/test exposures are available only after their timestamps; no labels in history.",
+    "Label is repeat-watch proxy, not KuaiRand long_view."
+  ]
+}

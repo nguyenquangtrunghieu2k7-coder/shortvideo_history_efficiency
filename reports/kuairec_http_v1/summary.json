@@ -1,0 +1,22 @@
+{
+  "status": "NATIVE_PASS",
+  "dataset": "KuaiRec",
+  "checkpoint_sha256": "27f0c044be1a169003b35adb9292e97e8bbbcb7074a1eeaec8e9b39729b710eb",
+  "snapshot_id": "5efe103f181f4aee8e3877c8e6c70aff",
+  "snapshot_scope": "full warm-item test cohort only",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "device": "mps",
+  "git_commit": "a0ccd7722e87fb5d9489394abbae65aa7f82f247",
+  "test_requests": 6455,
+  "http_requests": 7680,
+  "gates": {
+    "parity": true,
+    "single_lookup": true,
+    "policy_reload": true,
+    "invalid_policy_fallback": true,
+    "authorization": true,
+    "override_rejection": true,
+    "hard_caps": true
+  },
+  "scope": "Local raw Global Policy only; not contextual serving, calibrated serving, Docker, or cloud; snapshot contains test histories only"
+}

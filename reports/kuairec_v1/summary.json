@@ -1,0 +1,48 @@
+{
+  "status": "OFFLINE_PASS",
+  "dataset": "KuaiRec 2.0 big matrix",
+  "checkpoint_sha256": "27f0c044be1a169003b35adb9292e97e8bbbcb7074a1eeaec8e9b39729b710eb",
+  "train_requests": 30118,
+  "validation_requests": 6454,
+  "test_requests": 6455,
+  "positive_rate": 0.06940356312935708,
+  "fit_requests": 4165,
+  "calibration_requests": 2289,
+  "comparisons": {
+    "fixed50_vs_full": {
+      "delta_auc": -0.011156069407120217,
+      "user_cluster_ci95": [
+        -0.01916199501780066,
+        -0.003657252654098793
+      ]
+    },
+    "global_q90_vs_full": {
+      "delta_auc": -0.011926004482865071,
+      "user_cluster_ci95": [
+        -0.01888141662406439,
+        -0.005259907951917809
+      ]
+    },
+    "extra_trees_q90_vs_global": {
+      "delta_auc": 0.01041604734952073,
+      "user_cluster_ci95": [
+        -0.0006434834957821928,
+        0.021348422389862197
+      ]
+    }
+  },
+  "limitations": [
+    "Warm-item targets only; cold-item exclusion reported.",
+    "Observed exposure replay, not randomized exposure or small-matrix protocol.",
+    "Prior validation/test exposures are available only after their timestamps; no labels in history.",
+    "Label is repeat-watch proxy, not KuaiRand long_view.",
+    "Single trained checkpoint; no new specialist-model comparison.",
+    "M4 training protocol reused including variable history operators.",
+    "Original action grid only; no new model search.",
+    "Average precision is reported as AUPRC.",
+    "Expected cost excludes selector CPU and RPC overhead.",
+    "Mixtures matched on validation, not necessarily test; seed variation is not a confidence interval.",
+    "Checkpoint selection and calibration reuse validation; KuaiRec test not used for policy selection.",
+    "No serving measurements in this offline report."
+  ]
+}
