@@ -1,5 +1,6 @@
 """Post-hoc probability calibration sensitivity, cache-only.
-The KuaiRec test results have already been inspected: this is exploratory.
+Calibration sensitivity was motivated by the previously inspected KuaiRec results.
+Treat this as exploratory, not independent confirmation.
 One positive-slope logistic mapping, fitted across all validation-fit actions,
 keeps ranker scores ordered under a common monotone transform. No ranker
 inference, no checkpoint modifications, no test-based fitting or selection.
@@ -40,12 +41,15 @@ def fit_map(P,y):
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--source",type=Path,default=Path("reports/kuairec_v1"))
-    ap.add_argument("--output",type=Path,default=Path("reports/kuairec_calibration_v1"))
-    a=ap.parse_args();d=a.output.resolve();src=a.source.resolve();cache=src/"cache"
-    if d==src or d.name!="kuairec_calibration_v1":raise ValueError("Use separate calibration output")
+    ap.add_argument("--dataset",choices=["kuairec","vklsvd"],default="kuairec")
+    ap.add_argument("--source",type=Path)
+    ap.add_argument("--output",type=Path)
+    a=ap.parse_args();d=(a.output or Path(f"reports/{a.dataset}_calibration_v1")).resolve();src=(a.source or Path(f"reports/{a.dataset}_v1")).resolve();cache=src/"cache"
+    if d==src or src.name!=f"{a.dataset}_v1" or d.name!=f"{a.dataset}_calibration_v1":raise ValueError("Use separate dataset-specific calibration output")
     d.mkdir(parents=True,exist_ok=True)
     cc=json.loads((cache/"contract.json").read_text());summary=json.loads((src/"summary.json").read_text())
+    expected={"kuairec":"KuaiRec 2.0 big matrix","vklsvd":"VK-LSVD up0.001_ip0.001 weeks 20-25"}[a.dataset]
+    if summary["dataset"]!=expected or summary["status"]!="OFFLINE_PASS":raise ValueError("Dataset mismatch")
     if cc["actions"]!=list(NAMES) or cc["checkpoint_sha256"]!=summary["checkpoint_sha256"] or cc["checkpoint_sha256"]!=_sha(src/"behavior.pt"):raise ValueError("Cache provenance mismatch")
     if cc["selector_sha256"]!=_sha(Path(__file__).with_name("m5_selector.py")):raise ValueError("Selector changed")
     V=load(cache,"validation")
@@ -98,7 +102,7 @@ def main():
         ml=float(((1-z)*lm[:,i]+z*lm[:,b]).mean());mc=float(((1-z)*ct[:,i]+z*ct[:,b]).mean())
         matched.append(dict(profile=name,adaptive_auc=m["auc"],mixture_auc_mean=float(np.mean(aucs)),adaptive_cost=m["mean_cost"],mixture_expected_cost=mc,adaptive_bce=m["bce"],mixture_expected_bce=ml,delta_auc=m["auc"]-float(np.mean(aucs)),delta_utility=w*(m["bce"]-ml)/s.QUALITY_SCALE+pref["cost_weight"]*(m["mean_cost"]-mc)))
     df=pd.DataFrame(rows);df.to_csv(d/"quality_cost.csv",index=False);md=pd.DataFrame(matched);md.to_csv(d/"matched_comparison.csv",index=False)
-    write(d/"summary.json",dict(status="CALIBRATION_AUDIT_PASS",exploratory=True,slope=slope,intercept=intercept,checkpoint_sha256=cc["checkpoint_sha256"],limitations=["Post-hoc after inspection of KuaiRec test; not independent confirmation.","One shared monotone mapping fitted on validation-fit users; no ranker retraining.","Recompiled policies use calibrated BCE with same quality scale; utility across raw and calibrated objectives is not directly comparable.","Serving remains original raw protocol."]))
+    write(d/"summary.json",dict(status="CALIBRATION_AUDIT_PASS",dataset=expected,exploratory=True,slope=slope,intercept=intercept,checkpoint_sha256=cc["checkpoint_sha256"],limitations=["Sensitivity motivated by prior KuaiRec test inspection; not independent confirmation.","One shared monotone mapping fitted on validation-fit users; no ranker retraining.","Recompiled policies use calibrated BCE with same quality scale; utility across raw and calibrated objectives is not directly comparable.","Serving remains original raw protocol."]))
     print(ad[(ad.split=="test")&(ad.action=="recent_2048")].to_string(index=False))
     print(md.to_string(index=False));print(df[df.variant=="recompiled"][["method","profile","auc","bce","mean_k","mean_cost"]].to_string(index=False))
     print("CALIBRATION_AUDIT_PASS",flush=True)
