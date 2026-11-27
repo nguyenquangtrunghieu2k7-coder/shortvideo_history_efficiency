@@ -1,4 +1,4 @@
-"""Frozen KuaiRand protocol replay on KuaiRec. One shared M4 training run.
+"""Frozen KuaiRand protocol replay on KuaiRec or VK-LSVD. One shared M4 training run.
 All action predictions persist individually, so evaluation restarts are cache-only.
 Fit on validation users, freeze decisions before loading test labels.
 Do not compare raw AUC across datasets as if tasks were identical."""
@@ -100,15 +100,18 @@ def paired_auc_ci(y,u,a,b,repeats=500):
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--output",type=Path,default=Path("reports/kuairec_v1"))
+    ap.add_argument("--dataset",choices=["kuairec","vklsvd"],default="kuairec")
+    ap.add_argument("--output",type=Path)
     ap.add_argument("--epochs",type=int,default=12)
     ap.add_argument("--batch-size",type=int,default=32)
     ap.add_argument("--inference-batch",type=int,default=32)
     a=ap.parse_args()
     if min(a.epochs,a.batch_size,a.inference_batch)<1:ap.error("positive arguments required")
-    d=a.output.resolve();d.mkdir(parents=True,exist_ok=True);data=p.baseline.PROCESSED_DIR
-    if data.name!="processed" or data.parent.name!="kuairec":raise ValueError("Set SHORTVIDEO_PROCESSED_DIR to data/kuairec/processed")
-    if d.name!="kuairec_v1":raise ValueError("Use isolated reports/kuairec_v1")
+    dataset_name={"kuairec":"KuaiRec 2.0 big matrix","vklsvd":"VK-LSVD up0.001_ip0.001 weeks 20-25"}[a.dataset]
+    d=(a.output or Path(f"reports/{a.dataset}_v1")).resolve();data=p.baseline.PROCESSED_DIR
+    if data.name!="processed" or data.parent.name!=a.dataset:raise ValueError(f"Set SHORTVIDEO_PROCESSED_DIR to data/{a.dataset}/processed")
+    if d.name!=f"{a.dataset}_v1":raise ValueError(f"Use isolated reports/{a.dataset}_v1")
+    d.mkdir(parents=True,exist_ok=True)
     mf=data/"adapter_manifest.json";manifest=json.loads(mf.read_text())
     for name,h in manifest["artifacts"].items():
         if _sha(data/name)!=h:raise ValueError("Data artifact changed: "+name)
@@ -198,13 +201,13 @@ def main():
     for name,ix in (("fixed50_vs_full",np.full(len(y),NAMES.index("recent_50"))),("global_q90_vs_full",decisions["global__q0.9"]),("extra_trees_q90_vs_global",decisions["extra_trees__q0.9"])):
         ref=score[j,decisions["global__q0.9"]] if name=="extra_trees_q90_vs_global" else score[:,-1]
         pred=score[j,ix];comparisons[name]=dict(delta_auc=float(roc_auc_score(y,pred)-roc_auc_score(y,ref)),user_cluster_ci95=paired_auc_ci(y,T["u"],pred,ref))
-    summary=dict(status="OFFLINE_PASS",dataset="KuaiRec 2.0 big matrix",checkpoint_sha256=_sha(ck),train_requests=manifest["splits"]["train"]["sampled"],validation_requests=len(V["ids"]),test_requests=len(y),positive_rate=float(y.mean()),fit_requests=len(fit["ids"]),calibration_requests=len(cal["ids"]),comparisons=comparisons,
-        limitations=manifest["limitations"]+["Single trained checkpoint; no new specialist-model comparison.","M4 training protocol reused including variable history operators.","Original action grid only; no new model search.","Average precision is reported as AUPRC.","Expected cost excludes selector CPU and RPC overhead.","Mixtures matched on validation, not necessarily test; seed variation is not a confidence interval.","Checkpoint selection and calibration reuse validation; KuaiRec test not used for policy selection.","No serving measurements in this offline report."])
+    summary=dict(status="OFFLINE_PASS",dataset=dataset_name,checkpoint_sha256=_sha(ck),train_requests=manifest["splits"]["train"]["sampled"],validation_requests=len(V["ids"]),test_requests=len(y),positive_rate=float(y.mean()),fit_requests=len(fit["ids"]),calibration_requests=len(cal["ids"]),comparisons=comparisons,
+        limitations=manifest["limitations"]+["Single trained checkpoint; no new specialist-model comparison.","M4 training protocol reused including variable history operators.","Original action grid only; no new model search.","Average precision is reported as AUPRC.","Expected cost excludes selector CPU and RPC overhead.","Mixtures matched on validation, not necessarily test; seed variation is not a confidence interval.","Checkpoint selection and calibration reuse validation; test not used for policy selection.","No serving measurements in this offline report."])
     write(d/"summary.json",summary)
     def md(df):
         return "| "+" | ".join(df.columns)+" |\n| "+" | ".join(["---"]*len(df.columns))+" |\n"+"\n".join("| "+" | ".join(map(str,r))+" |" for r in df.itertuples(index=False,name=None))
     cols=["method","profile","auc","auprc","bce","mean_k","mean_bytes","mean_macs","mean_cost"]
-    report="# KuaiRec cross-dataset validation\n\n"+md(tf[cols].round(6))+"\n\n## Matched-cost comparisons\n\n"+md(pd.DataFrame(matched)[["method","profile","adaptive_auc","mixture_auc_mean","adaptive_cost","mixture_expected_cost","delta_utility"]].round(6))+"\n\n## Limitations\n\n"+"\n".join("- "+v for v in summary["limitations"])+"\n"
+    report=f"# {dataset_name} cross-dataset validation\n\n"+md(tf[cols].round(6))+"\n\n## Matched-cost comparisons\n\n"+md(pd.DataFrame(matched)[["method","profile","adaptive_auc","mixture_auc_mean","adaptive_cost","mixture_expected_cost","delta_utility"]].round(6))+"\n\n## Limitations\n\n"+"\n".join("- "+v for v in summary["limitations"])+"\n"
     (d/"REPORT.md").write_text(report)
     print(tf[cols].round(6).to_string(index=False));print("OFFLINE_PASS",json.dumps(summary,indent=2),flush=True)
 if __name__=="__main__":main()
