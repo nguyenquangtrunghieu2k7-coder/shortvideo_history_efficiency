@@ -1,0 +1,14 @@
+{
+  "status": "CALIBRATION_AUDIT_PASS",
+  "dataset": "WeChat D2Co days 1-14",
+  "exploratory": true,
+  "slope": 0.787746798507293,
+  "intercept": 0.09075519836046282,
+  "checkpoint_sha256": "09b44bdaf644c82bb9cf3b21c9171c0c1e886855de043745f691c8d0aa34b698",
+  "limitations": [
+    "Sensitivity motivated by prior KuaiRec test inspection; not independent confirmation.",
+    "One shared monotone mapping fitted on validation-fit users; no ranker retraining.",
+    "Recompiled policies use calibrated BCE with same quality scale; utility across raw and calibrated objectives is not directly comparable.",
+    "Serving remains original raw protocol."
+  ]
+}

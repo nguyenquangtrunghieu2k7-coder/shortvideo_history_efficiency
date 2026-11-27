@@ -1,0 +1,22 @@
+{
+  "status": "NATIVE_PASS",
+  "dataset": "WeChat",
+  "checkpoint_sha256": "09b44bdaf644c82bb9cf3b21c9171c0c1e886855de043745f691c8d0aa34b698",
+  "snapshot_id": "41485f06149146cfb7431d9e60de7dae",
+  "snapshot_scope": "full warm-item test cohort only",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "device": "mps",
+  "git_commit": "ada39738daf42f7d4ab018f71f955a0b537f7566",
+  "test_requests": 6455,
+  "http_requests": 7680,
+  "gates": {
+    "parity": true,
+    "single_lookup": true,
+    "policy_reload": true,
+    "invalid_policy_fallback": true,
+    "authorization": true,
+    "override_rejection": true,
+    "hard_caps": true
+  },
+  "scope": "Local raw Global Policy only; not contextual serving, calibrated serving, Docker, or cloud; snapshot contains test histories only"
+}

@@ -1,0 +1,51 @@
+{
+  "status": "OFFLINE_PASS",
+  "dataset": "WeChat D2Co days 1-14",
+  "checkpoint_sha256": "09b44bdaf644c82bb9cf3b21c9171c0c1e886855de043745f691c8d0aa34b698",
+  "train_requests": 30118,
+  "validation_requests": 6454,
+  "test_requests": 6455,
+  "positive_rate": 0.4844306738962045,
+  "fit_requests": 4226,
+  "calibration_requests": 2228,
+  "comparisons": {
+    "fixed50_vs_full": {
+      "delta_auc": -0.0052257420635408725,
+      "user_cluster_ci95": [
+        -0.010230765393085118,
+        -0.0006550605139595102
+      ]
+    },
+    "global_q90_vs_full": {
+      "delta_auc": -0.0052257420635408725,
+      "user_cluster_ci95": [
+        -0.010230765393085118,
+        -0.0006550605139595102
+      ]
+    },
+    "extra_trees_q90_vs_global": {
+      "delta_auc": -0.002260524418218446,
+      "user_cluster_ci95": [
+        -0.007704397127010121,
+        0.0039626058834154095
+      ]
+    }
+  },
+  "limitations": [
+    "D2Co WeChat preprocessed exposure dataset, not original full platform logs.",
+    "Day-level ordering only; same-day exposures excluded and prior within-day order approximated by deterministic video hash.",
+    "time_ms encodes relative day, not real timestamp.",
+    "Warm-item targets only; cold-item exclusion reported.",
+    "Prior observed exposures enter histories without labels.",
+    "Watch ratio >= 0.8 is a distinct engagement proxy; no aggregate watch statistics used.",
+    "Conflicting same-user/day/item binary labels removed; agreeing duplicate keys collapsed.",
+    "Single trained checkpoint; no new specialist-model comparison.",
+    "M4 training protocol reused including variable history operators.",
+    "Original action grid only; no new model search.",
+    "Average precision is reported as AUPRC.",
+    "Expected cost excludes selector CPU and RPC overhead.",
+    "Mixtures matched on validation, not necessarily test; seed variation is not a confidence interval.",
+    "Checkpoint selection and calibration reuse validation; test not used for policy selection.",
+    "No serving measurements in this offline report."
+  ]
+}

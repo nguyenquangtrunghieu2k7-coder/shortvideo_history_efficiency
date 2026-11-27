@@ -1,0 +1,104 @@
+{
+  "config": {
+    "source_sha256": "3f6b6358798ee06be1e6bac033b12731b374a384115d79e73f9e92855a0b3100",
+    "seed": 42,
+    "counts": [
+      30118,
+      6454,
+      6455
+    ],
+    "label": "playseconds_truncate / videoplayseconds >= 0.8",
+    "schema": 1,
+    "split_days": [
+      [
+        1,
+        10
+      ],
+      [
+        11,
+        12
+      ],
+      [
+        13,
+        14
+      ]
+    ],
+    "history_order": "past days only; stable video hash within day"
+  },
+  "raw_rows": 7310108,
+  "clean_rows": 7310108,
+  "invalid_rows_excluded": 0,
+  "conflict_rows_excluded": 0,
+  "duplicate_rows_collapsed": 0,
+  "vocab_size": 78005,
+  "duration_stats": {
+    "min": 5,
+    "max": 60,
+    "mean": 31.1835401063842,
+    "distinct": 56
+  },
+  "splits": {
+    "train": {
+      "raw_events": 4990514,
+      "eligible_events": 4990514,
+      "excluded_cold_items": 0,
+      "sampled": 30118,
+      "positive_rate": 0.4876153795072714,
+      "min_day": 1,
+      "max_day": 10,
+      "mean_history": 150.68221661464904,
+      "median_history": 109.0,
+      "p95_history": 453.0,
+      "empty_history": 4961,
+      "max_history": 886,
+      "unique_users": 12918
+    },
+    "validation": {
+      "raw_events": 1145197,
+      "eligible_events": 879053,
+      "excluded_cold_items": 266144,
+      "sampled": 6454,
+      "positive_rate": 0.49953517198636505,
+      "min_day": 11,
+      "max_day": 12,
+      "mean_history": 304.0680198326619,
+      "median_history": 292.0,
+      "p95_history": 627.3499999999995,
+      "empty_history": 158,
+      "max_history": 891,
+      "unique_users": 4556
+    },
+    "test": {
+      "raw_events": 1174397,
+      "eligible_events": 582510,
+      "excluded_cold_items": 591887,
+      "sampled": 6455,
+      "positive_rate": 0.4844306738962045,
+      "min_day": 13,
+      "max_day": 14,
+      "mean_history": 332.9154144074361,
+      "median_history": 315.0,
+      "p95_history": 692.2999999999993,
+      "empty_history": 153,
+      "max_history": 887,
+      "unique_users": 4492
+    }
+  },
+  "artifacts": {
+    "video_vocab.parquet": "244ac4646feeaf87dc389814f8142b8725c512bf715f8e2ace68f696c76ddca8",
+    "train.parquet": "6476308b2606729e5098bd3c7f25037c036d7a213d5fdd4f6f75d6e39f6d4960",
+    "test.parquet": "0a309617df5ca54af51237995ab583961805f1af504189f46e85e6f8dc222884",
+    "evaluation_events.parquet": "17a85764a061b2ec3ece7a1cfbf6fd96b52d4bbe705b40a98c5347382703eb3c",
+    "validation.parquet": "f2e59dd686ebedccdd669efcfa89fd7c6f58103bab8217961ce77eef6ff542d3",
+    "phase7/history_KFull.parquet": "dbdab98614490c9b3e87917eae0d7165cb4c7f04c3b1fe4022fd7144220058e1"
+  },
+  "limitations": [
+    "D2Co WeChat preprocessed exposure dataset, not original full platform logs.",
+    "Day-level ordering only; same-day exposures excluded and prior within-day order approximated by deterministic video hash.",
+    "time_ms encodes relative day, not real timestamp.",
+    "Warm-item targets only; cold-item exclusion reported.",
+    "Prior observed exposures enter histories without labels.",
+    "Watch ratio >= 0.8 is a distinct engagement proxy; no aggregate watch statistics used.",
+    "Conflicting same-user/day/item binary labels removed; agreeing duplicate keys collapsed."
+  ]
+}

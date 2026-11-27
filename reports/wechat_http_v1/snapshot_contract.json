@@ -1,0 +1,10 @@
+{
+  "contract": {
+    "checkpoint_sha256": "09b44bdaf644c82bb9cf3b21c9171c0c1e886855de043745f691c8d0aa34b698",
+    "vocab_sha256": "244ac4646feeaf87dc389814f8142b8725c512bf715f8e2ace68f696c76ddca8",
+    "adapter_sha256": "80c1f160e2916c89d7e1e47a113abd40592c71ecd5d649c7b63f15e07045c2ca",
+    "test_features_sha256": "fd7699167830cb81110546ab06f7d76f0a74f00e995f2c5c143972e6f4c5102c",
+    "scope": "full warm-item test cohort only"
+  },
+  "snapshot_id": "41485f06149146cfb7431d9e60de7dae"
+}
