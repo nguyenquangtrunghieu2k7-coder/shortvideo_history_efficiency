@@ -1,0 +1,95 @@
+{
+  "config": {
+    "source_files": {
+      "subsamples/up0.001_ip0.001/train/week_20.parquet": "d07e58198f0d3d2997d8631fbe5b870c5fdc2ce8ea172c6dc938c9c5e8bf214c",
+      "subsamples/up0.001_ip0.001/train/week_21.parquet": "6762fb6747f325730656bfa1c0718e24629af034ccf934b43442f31df4046908",
+      "subsamples/up0.001_ip0.001/train/week_22.parquet": "803625874af3f8b75e6a56d176f87e5f47df3577cac8a3b35d0cabd78a8892a9",
+      "subsamples/up0.001_ip0.001/train/week_23.parquet": "1fb32cfd2ad04e37bbe2591220ec1937b969eae749b36ec23ce2530f3fd32d34",
+      "subsamples/up0.001_ip0.001/train/week_24.parquet": "90e23ccaba11e6518500f1abc90ee8f9d88ae68f305fdc618698d2ca8efe6346",
+      "subsamples/up0.001_ip0.001/validation/week_25.parquet": "d654b40a7f7e2086054c6131767967f84289fafd2364f566b984cc7d408917f5"
+    },
+    "source_revision": {
+      "repo": "deepvk/VK-LSVD",
+      "revision": "084a18386e149a454dd6dbe0123478e75c6b09ce"
+    },
+    "subset": "up0.001_ip0.001",
+    "seed": 42,
+    "counts": [
+      30118,
+      6454,
+      6455
+    ],
+    "label": "timespent >= 10 seconds",
+    "schema": 1,
+    "temporal_protocol": "official train weeks 20-24; official validation week 25 split at middle row"
+  },
+  "raw_rows": 8262030,
+  "clean_rows": 8262030,
+  "vocab_size": 12326,
+  "week_counts": {
+    "20": 1388366,
+    "21": 1745900,
+    "22": 1706260,
+    "23": 1672715,
+    "24": 1228950,
+    "25": 519839
+  },
+  "cutoffs_ordinal": [
+    7742191,
+    8002110
+  ],
+  "splits": {
+    "train": {
+      "raw_events": 7742191,
+      "eligible_events": 7742191,
+      "excluded_cold_items": 0,
+      "sampled": 30118,
+      "positive_rate": 0.39497974633109767,
+      "min_ordinal": 6,
+      "max_ordinal": 7741338,
+      "mean_history": 435.79958828607477,
+      "empty_history": 42,
+      "max_history": 1910
+    },
+    "validation": {
+      "raw_events": 259919,
+      "eligible_events": 259592,
+      "excluded_cold_items": 327,
+      "sampled": 6454,
+      "positive_rate": 0.4095134800123954,
+      "min_ordinal": 7742196,
+      "max_ordinal": 8002091,
+      "mean_history": 870.622249767586,
+      "empty_history": 0,
+      "max_history": 1959
+    },
+    "test": {
+      "raw_events": 259920,
+      "eligible_events": 256309,
+      "excluded_cold_items": 3611,
+      "sampled": 6455,
+      "positive_rate": 0.4113090627420604,
+      "min_ordinal": 8002114,
+      "max_ordinal": 8261968,
+      "mean_history": 894.9013168086755,
+      "empty_history": 0,
+      "max_history": 2033
+    }
+  },
+  "artifacts": {
+    "video_vocab.parquet": "261d58571bf7207de379d22c11b006fd98ee8b58cba82e21e154f2dc3f20c67b",
+    "train.parquet": "6930349a28f567cb3484c632610e15f501a8804cf52ea1a521ba47be6f57f969",
+    "test.parquet": "572dfe473cc5b76df194741eff0805962c1583eddba5aea8fe369b5e61d76ef1",
+    "evaluation_events.parquet": "8e52caab8fc59d22f42fecab8dec43eca7abd7acaccbfc3cde0b3da5b1e7ebc3",
+    "validation.parquet": "0a4167dc4918efc32137e99c846397470600e8f479780f766f401a0af02b9622",
+    "phase7/history_KFull.parquet": "e4aba20546a6501505a984cd7453d16b53a05a023a560b263a50c5b1b8ad0f62"
+  },
+  "limitations": [
+    "Popular-user/item official subset; six weeks only; not representative of all VK.",
+    "Warm-item targets only; cold-item exclusion reported.",
+    "Official validation week divided into two ordered halves, not the official test benchmark.",
+    "Row order is documented chronological; exact timestamps and ties unavailable. time_ms is a compatibility ordinal, not a real timestamp.",
+    "Prior exposures enter history by row order; no labels in history.",
+    "Absolute ten-second watch threshold is a distinct engagement proxy, not KuaiRand or KuaiRec label."
+  ]
+}

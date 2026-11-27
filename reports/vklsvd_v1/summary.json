@@ -1,0 +1,50 @@
+{
+  "status": "OFFLINE_PASS",
+  "dataset": "VK-LSVD up0.001_ip0.001 weeks 20-25",
+  "checkpoint_sha256": "a744996c2c3d0d7dcf12dfdc7c62fcceed31d556e1f82ced77883981f61666bb",
+  "train_requests": 30118,
+  "validation_requests": 6454,
+  "test_requests": 6455,
+  "positive_rate": 0.4113090627420604,
+  "fit_requests": 4191,
+  "calibration_requests": 2263,
+  "comparisons": {
+    "fixed50_vs_full": {
+      "delta_auc": -0.014693874516800376,
+      "user_cluster_ci95": [
+        -0.01949311083980721,
+        -0.010359252475054738
+      ]
+    },
+    "global_q90_vs_full": {
+      "delta_auc": -0.014693874516800376,
+      "user_cluster_ci95": [
+        -0.01949311083980721,
+        -0.010359252475054738
+      ]
+    },
+    "extra_trees_q90_vs_global": {
+      "delta_auc": 0.013825056992764484,
+      "user_cluster_ci95": [
+        0.006990251386104693,
+        0.021033332577341465
+      ]
+    }
+  },
+  "limitations": [
+    "Popular-user/item official subset; six weeks only; not representative of all VK.",
+    "Warm-item targets only; cold-item exclusion reported.",
+    "Official validation week divided into two ordered halves, not the official test benchmark.",
+    "Row order is documented chronological; exact timestamps and ties unavailable. time_ms is a compatibility ordinal, not a real timestamp.",
+    "Prior exposures enter history by row order; no labels in history.",
+    "Absolute ten-second watch threshold is a distinct engagement proxy, not KuaiRand or KuaiRec label.",
+    "Single trained checkpoint; no new specialist-model comparison.",
+    "M4 training protocol reused including variable history operators.",
+    "Original action grid only; no new model search.",
+    "Average precision is reported as AUPRC.",
+    "Expected cost excludes selector CPU and RPC overhead.",
+    "Mixtures matched on validation, not necessarily test; seed variation is not a confidence interval.",
+    "Checkpoint selection and calibration reuse validation; test not used for policy selection.",
+    "No serving measurements in this offline report."
+  ]
+}

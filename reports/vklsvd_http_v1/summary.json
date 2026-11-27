@@ -1,0 +1,22 @@
+{
+  "status": "NATIVE_PASS",
+  "dataset": "VK-LSVD",
+  "checkpoint_sha256": "a744996c2c3d0d7dcf12dfdc7c62fcceed31d556e1f82ced77883981f61666bb",
+  "snapshot_id": "d464de9f9db145ca893ddaa6785afcc3",
+  "snapshot_scope": "full warm-item test cohort only",
+  "platform": "macOS-27.0.1-arm64-arm-64bit",
+  "device": "mps",
+  "git_commit": "51348826d5f6c37de57e38fd544bbaa7d192b33d",
+  "test_requests": 6455,
+  "http_requests": 7680,
+  "gates": {
+    "parity": true,
+    "single_lookup": true,
+    "policy_reload": true,
+    "invalid_policy_fallback": true,
+    "authorization": true,
+    "override_rejection": true,
+    "hard_caps": true
+  },
+  "scope": "Local raw Global Policy only; not contextual serving, calibrated serving, Docker, or cloud; snapshot contains test histories only"
+}

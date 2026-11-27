@@ -1,0 +1,11 @@
+{
+  "adapter_sha256": "8ce753de2ea06dcff9661168a28b32378b672c2076a238c4ac5c3fad3d177bc1",
+  "trainer_sha256": "d6a1892a8b740b69ff34917e3c0bbc02c1e5c7278bcc6b201c30adb1060624b2",
+  "ranker_sha256": "5dcd61a64e3b0dcdaede496309042eb118540ea8dba9a766bf1641b2707a676b",
+  "behavior_sha256": "a1dbebcaaf96e17d36535aa9c86206d74af25f23f7c723e5fe78f05c8249ac0b",
+  "epochs": 12,
+  "batch_size": 32,
+  "seed": 42,
+  "behavior": true,
+  "distill": false
+}

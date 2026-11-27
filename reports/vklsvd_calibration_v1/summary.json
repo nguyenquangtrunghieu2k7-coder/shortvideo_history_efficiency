@@ -1,0 +1,14 @@
+{
+  "status": "CALIBRATION_AUDIT_PASS",
+  "dataset": "VK-LSVD up0.001_ip0.001 weeks 20-25",
+  "exploratory": true,
+  "slope": 0.8538002173084606,
+  "intercept": -0.1508110177919494,
+  "checkpoint_sha256": "a744996c2c3d0d7dcf12dfdc7c62fcceed31d556e1f82ced77883981f61666bb",
+  "limitations": [
+    "Sensitivity motivated by prior KuaiRec test inspection; not independent confirmation.",
+    "One shared monotone mapping fitted on validation-fit users; no ranker retraining.",
+    "Recompiled policies use calibrated BCE with same quality scale; utility across raw and calibrated objectives is not directly comparable.",
+    "Serving remains original raw protocol."
+  ]
+}

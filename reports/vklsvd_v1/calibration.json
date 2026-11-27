@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "checkpoint_sha256": "a744996c2c3d0d7dcf12dfdc7c62fcceed31d556e1f82ced77883981f61666bb",
+  "vocab_sha256": "261d58571bf7207de379d22c11b006fd98ee8b58cba82e21e154f2dc3f20c67b",
+  "fit_requests": 4191,
+  "rows": [
+    {
+      "k": 0,
+      "mean_tokens": 0.0,
+      "mean_bce": 0.6734558905054796,
+      "mean_macs": 27984.0
+    },
+    {
+      "k": 1,
+      "mean_tokens": 1.0,
+      "mean_bce": 0.6793997165229904,
+      "mean_macs": 27984.0
+    },
+    {
+      "k": 5,
+      "mean_tokens": 5.0,
+      "mean_bce": 0.6648641687912187,
+      "mean_macs": 53136.0
+    },
+    {
+      "k": 10,
+      "mean_tokens": 10.0,
+      "mean_bce": 0.6644357677157735,
+      "mean_macs": 84576.0
+    },
+    {
+      "k": 20,
+      "mean_tokens": 20.0,
+      "mean_bce": 0.6628675674463966,
+      "mean_macs": 147456.0
+    },
+    {
+      "k": 50,
+      "mean_tokens": 50.0,
+      "mean_bce": 0.661797461784485,
+      "mean_macs": 336096.0
+    },
+    {
+      "k": 100,
+      "mean_tokens": 100.0,
+      "mean_bce": 0.6616726200273699,
+      "mean_macs": 650496.0
+    },
+    {
+      "k": 2048,
+      "mean_tokens": 868.9179193509902,
+      "mean_bce": 0.6597785723660478,
+      "mean_macs": 5485451.876879026
+    }
+  ]
+}
